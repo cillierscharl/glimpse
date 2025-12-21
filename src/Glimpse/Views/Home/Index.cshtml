@@ -118,6 +118,7 @@ else
 @if (progress?.IsScanning == true)
 {
     <script>
+        let lastProcessed = 0;
         setInterval(() => {
             fetch('/api/progress')
                 .then(r => r.json())
@@ -127,8 +128,27 @@ else
                     document.getElementById('progress-percent').textContent = p.percentComplete;
                     document.getElementById('progress-bar').style.width = `${p.percentComplete}%`;
                     document.getElementById('progress-file').textContent = p.currentFile || '';
+                    
+                    // Refresh grid when new images are processed
+                    if (p.processedFiles > lastProcessed) {
+                        lastProcessed = p.processedFiles;
+                        refreshGrid();
+                    }
                 });
         }, 2000);
+        
+        function refreshGrid() {
+            const query = '@(query ?? "")';
+            const url = query ? `/?q=${encodeURIComponent(query)}` : '/';
+            fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                .then(r => r.text())
+                .then(html => {
+                    const grid = document.getElementById('screenshots-grid');
+                    if (grid && html.trim()) {
+                        grid.innerHTML = html;
+                    }
+                });
+        }
     </script>
 }
 

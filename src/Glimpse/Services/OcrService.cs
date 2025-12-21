@@ -1,40 +1,53 @@
-using System.Diagnostics;
+using System.Net.Http.Json;
+using System.Text.Json;
 
 namespace Glimpse.Services;
 
 public class OcrService
 {
     private readonly ILogger<OcrService> _logger;
-    private readonly string _language;
+    private readonly HttpClient _httpClient;
+    private readonly string _model;
+    private readonly string _baseUrl;
 
     public OcrService(IConfiguration config, ILogger<OcrService> logger)
     {
         _logger = logger;
-        _language = config.GetValue<string>("Tesseract:Language") ?? "eng";
+        _baseUrl = config.GetValue<string>("Ollama:BaseUrl") ?? "http://localhost:11434";
+        _model = config.GetValue<string>("Ollama:Model") ?? "llama3.2-vision";
+        _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
     }
 
     public async Task<string> ExtractTextAsync(string imagePath, CancellationToken cancellationToken = default)
     {
         try
         {
-            var psi = new ProcessStartInfo
+            // Read and encode image as base64
+            var imageBytes = await File.ReadAllBytesAsync(imagePath, cancellationToken);
+            var base64Image = Convert.ToBase64String(imageBytes);
+
+            var request = new
             {
-                FileName = "tesseract",
-                // PSM 3 = Fully automatic page segmentation (default)
-                // OEM 1 = LSTM neural net only (most accurate)
-                Arguments = $"\"{imagePath}\" stdout -l {_language} --psm 3 --oem 1",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
+                model = _model,
+                prompt = "Extract all text visible in this image. Return only the extracted text, nothing else. If there is no text, return an empty response.",
+                images = new[] { base64Image },
+                stream = false
             };
 
-            using var process = Process.Start(psi);
-            if (process == null) return string.Empty;
-            
-            var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken);
-            
-            return output.Trim();
+            var response = await _httpClient.PostAsJsonAsync(
+                $"{_baseUrl}/api/generate",
+                request,
+                cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogError("Ollama API error: {Status} - {Error}", response.StatusCode, error);
+                return string.Empty;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<OllamaResponse>(cancellationToken);
+            return result?.Response?.Trim() ?? string.Empty;
         }
         catch (Exception ex)
         {
@@ -42,4 +55,6 @@ public class OcrService
             return string.Empty;
         }
     }
+
+    private record OllamaResponse(string Response);
 }

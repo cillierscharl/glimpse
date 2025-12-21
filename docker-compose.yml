@@ -8,4 +8,23 @@ services:
       - ${SCREENSHOTS_PATH:-~/Pictures/Screenshots}:/screenshots:ro
     environment:
       - ASPNETCORE_URLS=http://+:5123
+      - Ollama__BaseUrl=http://ollama:11434
+    depends_on:
+      - ollama
     restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  ollama_data:
