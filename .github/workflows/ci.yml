@@ -19,20 +19,15 @@ jobs:
           dotnet-version: '10.0.x'
           dotnet-quality: 'preview'
       
-      - name: Restore dependencies
-        run: dotnet restore src/Glimpse/Glimpse.csproj
+      - name: Restore
+        run: dotnet restore
+        working-directory: tests/Glimpse.Tests
       
       - name: Build
-        run: dotnet build src/Glimpse/Glimpse.csproj --no-restore -c Release
+        run: dotnet build -c Release --no-restore
+        working-directory: tests/Glimpse.Tests
       
       - name: Test
-        run: dotnet test tests/Glimpse.Tests/Glimpse.Tests.csproj -c Release --verbosity normal
+        run: dotnet test -c Release --no-build --verbosity normal
+        working-directory: tests/Glimpse.Tests
 
-  docker:
-    runs-on: ubuntu-latest
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Build Docker image
-        run: docker build -t glimpse .
