@@ -1,0 +1,11 @@
+services:
+  glimpse:
+    build: .
+    ports:
+      - "5123:5123"
+    volumes:
+      - ./data:/data
+      - ${SCREENSHOTS_PATH:-~/Pictures/Screenshots}:/screenshots:ro
+    environment:
+      - ASPNETCORE_URLS=http://+:5123
+    restart: unless-stopped

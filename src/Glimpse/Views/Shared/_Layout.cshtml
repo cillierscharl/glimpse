@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>@ViewData["Title"] - Glimpse</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            50: '#f7f7f8',
+                            100: '#ececf1',
+                            200: '#d9d9e3',
+                            300: '#c5c5d2',
+                            400: '#acacbe',
+                            500: '#8e8ea0',
+                            600: '#565869',
+                            700: '#40414f',
+                            800: '#343541',
+                            900: '#202123',
+                            950: '#0d0d0f',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @@layer utilities {
+            .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+            .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+            .scrollbar-thin::-webkit-scrollbar-thumb { background: #565869; border-radius: 3px; }
+            .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #8e8ea0; }
+        }
+    </style>
+</head>
+<body class="bg-dark-950 text-dark-100 min-h-screen antialiased scrollbar-thin">
+    <div class="min-h-screen flex flex-col">
+        <!-- Header -->
+        <header class="sticky top-0 z-40 backdrop-blur-xl bg-dark-950/80 border-b border-dark-800">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex items-center justify-between h-16">
+                    <a href="/" class="flex items-center group">
+                        <span class="text-xl font-semibold bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent">Glimpse</span>
+                    </a>
+                    <div class="flex items-center gap-2 text-dark-500 text-sm">
+                        <span>Screenshot OCR Search</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="flex-1">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                @RenderBody()
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="border-t border-dark-800 py-6">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-dark-600 text-sm">
+                Glimpse — Find any screenshot instantly
+            </div>
+        </footer>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2"></div>
+
+    <script>
+        // Copy image to clipboard using browser API
+        async function copyImageToClipboard(src) {
+            try {
+                const response = await fetch(src);
+                const blob = await response.blob();
+                await navigator.clipboard.write([
+                    new ClipboardItem({ [blob.type]: blob })
+                ]);
+                showToast('Copied to clipboard!', 'success');
+            } catch (e) {
+                console.error('Clipboard error:', e);
+                showToast('Failed to copy - try right-click and copy', 'error');
+            }
+        }
+
+        // Toast
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const colors = type === 'success' 
+                ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400'
+                : 'bg-red-500/10 border-red-500/50 text-red-400';
+            toast.className = `px-4 py-3 rounded-xl border backdrop-blur-xl ${colors} transform translate-x-full opacity-0 transition-all duration-300`;
+            toast.innerHTML = `
+                <div class="flex items-center gap-2">
+                    ${type === 'success' 
+                        ? '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>'
+                        : '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>'
+                    }
+                    <span class="text-sm font-medium">${message}</span>
+                </div>
+            `;
+            container.appendChild(toast);
+            requestAnimationFrame(() => {
+                toast.classList.remove('translate-x-full', 'opacity-0');
+            });
+            setTimeout(() => {
+                toast.classList.add('translate-x-full', 'opacity-0');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
