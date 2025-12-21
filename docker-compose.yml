@@ -17,6 +17,8 @@ services:
     image: ollama/ollama:latest
     volumes:
       - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
     restart: unless-stopped
     deploy:
       resources:

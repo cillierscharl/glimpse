@@ -100,24 +100,12 @@ else
     <div id="screenshots-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
         @await Html.PartialAsync("_ScreenshotGrid", Model)
     </div>
-    
-    @if ((bool)ViewBag.HasMore)
-    {
-        <div id="load-more" class="flex justify-center py-8">
-            <div class="flex items-center gap-2 text-dark-500">
-                <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span>Loading more...</span>
-            </div>
-        </div>
-    }
 }
 
 @if (progress?.IsScanning == true)
 {
     <script>
+        let lastCount = @(progress.AlreadyIndexed + progress.ProcessedFiles);
         setInterval(() => {
             fetch('/api/progress')
                 .then(r => r.json())
@@ -128,6 +116,18 @@ else
                     document.getElementById('progress-percent').textContent = p.percentComplete;
                     document.getElementById('progress-bar').style.width = `${p.percentComplete}%`;
                     document.getElementById('progress-file').textContent = p.currentFile || '';
+                    
+                    // Reload grid if new screenshots were processed
+                    const newCount = p.alreadyIndexed + p.processedFiles;
+                    if (newCount > lastCount) {
+                        lastCount = newCount;
+                        fetch('/', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                            .then(r => r.text())
+                            .then(html => {
+                                const grid = document.getElementById('screenshots-grid');
+                                if (grid) grid.innerHTML = html;
+                            });
+                    }
                 });
         }, 2000);
     </script>
@@ -141,6 +141,14 @@ else
             input.focus();
             input.setSelectionRange(input.value.length, input.value.length);
             
+            // Escape key clears search
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    input.value = '';
+                    input.dispatchEvent(new Event('input'));
+                }
+            });
+            
             // Debounced live search
             let debounceTimer;
             input.addEventListener('input', function() {
@@ -152,60 +160,9 @@ else
                     } else {
                         url.searchParams.delete('q');
                     }
-                    url.searchParams.delete('page');
                     window.location.href = url.toString();
                 }, 500);
             });
-        }
-
-        // Infinite scroll
-        let currentPage = @((int)ViewBag.Page);
-        let isLoading = false;
-        let hasMore = @((bool)ViewBag.HasMore ? "true" : "false");
-        const grid = document.getElementById('screenshots-grid');
-        const loadMore = document.getElementById('load-more');
-        const query = '@(query ?? "")';
-
-        function loadNextPage() {
-            if (isLoading || !hasMore) return;
-            isLoading = true;
-            currentPage++;
-            
-            const url = new URL(window.location);
-            url.searchParams.set('page', currentPage);
-            
-            fetch(url.toString(), {
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            })
-            .then(r => r.text())
-            .then(html => {
-                if (html.trim()) {
-                    grid.insertAdjacentHTML('beforeend', html);
-                    // Check if we got a full page
-                    const tempDiv = document.createElement('div');
-                    tempDiv.innerHTML = html;
-                    hasMore = tempDiv.children.length >= 24;
-                } else {
-                    hasMore = false;
-                }
-                if (!hasMore && loadMore) {
-                    loadMore.remove();
-                }
-                isLoading = false;
-            })
-            .catch(() => {
-                isLoading = false;
-            });
-        }
-
-        // Intersection Observer for infinite scroll
-        if (loadMore) {
-            const observer = new IntersectionObserver((entries) => {
-                if (entries[0].isIntersecting) {
-                    loadNextPage();
-                }
-            }, { rootMargin: '200px' });
-            observer.observe(loadMore);
         }
     });
 </script>

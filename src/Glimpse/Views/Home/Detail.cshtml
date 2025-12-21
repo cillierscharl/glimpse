@@ -58,13 +58,22 @@
         <div class="bg-dark-900 rounded-2xl border border-dark-800 p-6">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-semibold text-dark-100">Extracted Text</h2>
-                <button onclick="copyTextToClipboard()" 
-                        class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-dark-300 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                    Copy Text
-                </button>
+                <div class="flex gap-2">
+                    <button id="reocr-btn" onclick="reOcr(@Model.Id)" 
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-dark-300 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        <span id="reocr-text">Re-OCR</span>
+                    </button>
+                    <button onclick="copyTextToClipboard()" 
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-dark-300 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                        Copy Text
+                    </button>
+                </div>
             </div>
             <div id="ocr-text" class="text-dark-400 text-sm whitespace-pre-wrap font-mono bg-dark-950 rounded-xl p-4 overflow-x-auto scrollbar-thin">@(string.IsNullOrEmpty(Model.OcrText) ? "No text detected" : Model.OcrText)</div>
         </div>
@@ -92,6 +101,23 @@
                     <dd class="text-dark-300">@(Model.OcrText?.Length ?? 0) characters</dd>
                 </div>
             </dl>
+        </div>
+        
+        <!-- Notes Section -->
+        <div class="bg-dark-900 rounded-2xl border border-dark-800 p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-dark-100">Notes</h2>
+                <button id="save-notes-btn" onclick="saveNotes(@Model.Id)" 
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-dark-300 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span id="save-notes-text">Save</span>
+                </button>
+            </div>
+            <textarea id="notes-input" 
+                      class="w-full h-24 bg-dark-950 border border-dark-700 rounded-xl p-3 text-dark-300 text-sm resize-none focus:outline-none focus:border-dark-600"
+                      placeholder="Add notes about this screenshot...">@Model.Notes</textarea>
         </div>
     </div>
 </div>
@@ -133,6 +159,53 @@
             }
         } catch (e) {
             showToast('Failed to delete screenshot', 'error');
+        }
+    }
+    
+    async function reOcr(id) {
+        const btn = document.getElementById('reocr-btn');
+        const text = document.getElementById('reocr-text');
+        btn.disabled = true;
+        text.textContent = 'Processing...';
+        try {
+            const response = await fetch(`/api/screenshots/${id}/reocr`, { method: 'POST' });
+            if (response.ok) {
+                const data = await response.json();
+                document.getElementById('ocr-text').textContent = data.ocrText || 'No text detected';
+                text.textContent = 'Done!';
+                setTimeout(() => { text.textContent = 'Re-OCR'; btn.disabled = false; }, 2000);
+            } else {
+                text.textContent = 'Failed';
+                setTimeout(() => { text.textContent = 'Re-OCR'; btn.disabled = false; }, 2000);
+            }
+        } catch (e) {
+            text.textContent = 'Failed';
+            setTimeout(() => { text.textContent = 'Re-OCR'; btn.disabled = false; }, 2000);
+        }
+    }
+    
+    async function saveNotes(id) {
+        const btn = document.getElementById('save-notes-btn');
+        const text = document.getElementById('save-notes-text');
+        const notes = document.getElementById('notes-input').value;
+        btn.disabled = true;
+        text.textContent = 'Saving...';
+        try {
+            const response = await fetch(`/api/screenshots/${id}/notes`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ notes })
+            });
+            if (response.ok) {
+                text.textContent = 'Saved!';
+                setTimeout(() => { text.textContent = 'Save'; btn.disabled = false; }, 2000);
+            } else {
+                text.textContent = 'Failed';
+                setTimeout(() => { text.textContent = 'Save'; btn.disabled = false; }, 2000);
+            }
+        } catch (e) {
+            text.textContent = 'Failed';
+            setTimeout(() => { text.textContent = 'Save'; btn.disabled = false; }, 2000);
         }
     }
 </script>

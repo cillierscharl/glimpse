@@ -36,20 +36,18 @@ public class HomeController : Controller
             else
             {
                 // Text search
-                query = query.Where(s => s.OcrText != null && EF.Functions.Like(s.OcrText, $"%{q}%"));
+                query = query.Where(s =>
+                    (s.OcrText != null && EF.Functions.Like(s.OcrText, $"%{q}%")) ||
+                    (s.Notes != null && EF.Functions.Like(s.Notes, $"%{q}%")));
             }
         }
         
         var screenshots = await query
             .OrderByDescending(s => s.CreatedAt)
-            .Skip(page * PageSize)
-            .Take(PageSize)
             .ToListAsync();
 
         ViewBag.SearchQuery = q;
         ViewBag.Progress = _progress;
-        ViewBag.Page = page;
-        ViewBag.HasMore = screenshots.Count == PageSize;
         
         if (Request.Headers.XRequestedWith == "XMLHttpRequest")
         {
@@ -126,4 +124,5 @@ public class HomeController : Controller
 
         return null;
     }
+
 }

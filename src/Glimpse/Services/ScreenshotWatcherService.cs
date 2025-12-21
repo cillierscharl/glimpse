@@ -83,8 +83,11 @@ public class ScreenshotWatcherService : BackgroundService
         var allFiles = Directory.EnumerateFiles(_watchPath)
             .Where(f => IsValidExtension(f))
             .ToList();
-            
-        var filesToProcess = allFiles.Where(f => !existingPaths.Contains(f)).ToList();
+
+        var filesToProcess = allFiles
+            .Where(f => !existingPaths.Contains(f))
+            .OrderByDescending(f => File.GetCreationTimeUtc(f))
+            .ToList();
 
         _progress.TotalFiles = allFiles.Count;
         _progress.AlreadyIndexed = existingPaths.Count;
@@ -97,7 +100,7 @@ public class ScreenshotWatcherService : BackgroundService
         // Process in parallel with limited concurrency
         var parallelOptions = new ParallelOptions
         {
-            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2),
+            MaxDegreeOfParallelism = 2,
             CancellationToken = stoppingToken
         };
 
