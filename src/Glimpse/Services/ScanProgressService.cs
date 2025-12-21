@@ -16,6 +16,7 @@ public class ScanProgressService
     }
     public volatile bool IsScanning;
     public string? CurrentFile { get; set; }
+    public string? OllamaStatus { get; set; }
 
     public int TotalIndexed => AlreadyIndexed + ProcessedFiles;
     public int RemainingFiles => TotalFiles - TotalIndexed;
@@ -75,7 +76,8 @@ public class ScanProgressService
         ProcessedFiles,
         RemainingFiles,
         PercentComplete,
-        CurrentFile
+        CurrentFile,
+        OllamaStatus
     );
 }
 
@@ -86,7 +88,8 @@ public record ProgressUpdate(
     int ProcessedFiles,
     int RemainingFiles,
     int PercentComplete,
-    string? CurrentFile
+    string? CurrentFile,
+    string? OllamaStatus
 );
 
 public record ScreenshotNotification(int Id, string Filename);

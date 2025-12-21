@@ -6,7 +6,24 @@
     var query = ViewBag.SearchQuery as string;
 }
 
-@if (progress?.IsScanning == true)
+@if (progress?.OllamaStatus != null)
+{
+    <div id="ollama-status" class="mb-8 p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/20">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
+                <svg class="w-4 h-4 text-amber-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+            </div>
+            <div>
+                <p class="text-sm font-medium text-dark-100">Setting up OCR</p>
+                <p class="text-xs text-dark-500" id="ollama-status-text">@progress.OllamaStatus</p>
+            </div>
+        </div>
+    </div>
+}
+else if (progress?.IsScanning == true)
 {
     <div id="progress" class="mb-8 p-4 rounded-2xl bg-gradient-to-r from-violet-500/10 to-fuchsia-500/10 border border-violet-500/20">
         <div class="flex items-center justify-between mb-3">
@@ -102,7 +119,7 @@ else
     </div>
 }
 
-@if (progress?.IsScanning == true)
+@if (progress?.OllamaStatus != null || progress?.IsScanning == true)
 {
     <script>
         // Request notification permission
@@ -114,9 +131,24 @@ else
 
         evtSource.addEventListener('progress', (e) => {
             const p = JSON.parse(e.data);
+
+            // Handle Ollama status
+            const ollamaEl = document.getElementById('ollama-status');
+            const progressEl = document.getElementById('progress');
+
+            if (p.OllamaStatus) {
+                document.getElementById('ollama-status-text').textContent = p.OllamaStatus;
+                if (progressEl) progressEl.style.display = 'none';
+                return;
+            } else if (ollamaEl) {
+                ollamaEl.remove();
+                location.reload(); // Reload to show scan progress properly
+                return;
+            }
+
             if (!p.IsScanning) {
                 evtSource.close();
-                document.getElementById('progress')?.remove();
+                progressEl?.remove();
                 // Final grid refresh
                 fetch('/', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
                     .then(r => r.text())

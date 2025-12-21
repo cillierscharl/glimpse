@@ -10,16 +10,120 @@ public class OcrService
     private readonly string _model;
     private readonly string _baseUrl;
 
+    public bool IsReady { get; private set; }
+    public string? Status { get; private set; }
+
+    public event Action? OnStatusChange;
+
     public OcrService(IConfiguration config, ILogger<OcrService> logger)
     {
         _logger = logger;
         _baseUrl = config.GetValue<string>("Ollama:BaseUrl") ?? "http://localhost:11434";
-        _model = config.GetValue<string>("Ollama:Model") ?? "llama3.2-vision";
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        _model = config.GetValue<string>("Ollama:Model") ?? "minicpm-v";
+        _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        Status = "Waiting for Ollama...";
+    }
+
+    public async Task WaitForReadyAsync(CancellationToken ct = default)
+    {
+        // Wait for Ollama to be reachable
+        Status = "Waiting for Ollama...";
+        OnStatusChange?.Invoke();
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var response = await _httpClient.GetAsync($"{_baseUrl}/api/tags", ct);
+                if (response.IsSuccessStatusCode) break;
+            }
+            catch
+            {
+                // Not ready yet
+            }
+            await Task.Delay(2000, ct);
+        }
+
+        _logger.LogInformation("Ollama is reachable");
+
+        // Check if model is available
+        Status = $"Checking for {_model}...";
+        OnStatusChange?.Invoke();
+
+        var hasModel = await CheckModelExistsAsync(ct);
+        if (!hasModel)
+        {
+            Status = $"Pulling {_model} (this may take a few minutes)...";
+            OnStatusChange?.Invoke();
+            _logger.LogInformation("Pulling model {Model}...", _model);
+
+            await PullModelAsync(ct);
+        }
+
+        Status = null;
+        IsReady = true;
+        OnStatusChange?.Invoke();
+        _logger.LogInformation("OCR service ready with model {Model}", _model);
+    }
+
+    private async Task<bool> CheckModelExistsAsync(CancellationToken ct)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_baseUrl}/api/tags", ct);
+            if (!response.IsSuccessStatusCode) return false;
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
+            if (json.TryGetProperty("models", out var models))
+            {
+                foreach (var model in models.EnumerateArray())
+                {
+                    if (model.TryGetProperty("name", out var name) &&
+                        name.GetString()?.StartsWith(_model) == true)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task PullModelAsync(CancellationToken ct)
+    {
+        var request = new { name = _model };
+        var response = await _httpClient.PostAsJsonAsync($"{_baseUrl}/api/pull", request, ct);
+
+        // Stream the response to wait for completion
+        using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream);
+        while (!reader.EndOfStream && !ct.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(ct);
+            if (line != null)
+            {
+                try
+                {
+                    var json = JsonSerializer.Deserialize<JsonElement>(line);
+                    if (json.TryGetProperty("status", out var status))
+                    {
+                        Status = $"Pulling {_model}: {status.GetString()}";
+                        OnStatusChange?.Invoke();
+                    }
+                }
+                catch { }
+            }
+        }
     }
 
     public async Task<string> ExtractTextAsync(string imagePath, CancellationToken cancellationToken = default)
     {
+        if (!IsReady) return string.Empty;
+
         try
         {
             // Read and encode image as base64

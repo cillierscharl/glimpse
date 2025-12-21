@@ -37,6 +37,17 @@ public class ScreenshotWatcherService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Wire up Ollama status to progress service
+        _ocrService.OnStatusChange += () =>
+        {
+            _progress.OllamaStatus = _ocrService.Status;
+            _progress.NotifyChange();
+        };
+
+        // Wait for Ollama and model to be ready
+        _progress.OllamaStatus = _ocrService.Status;
+        await _ocrService.WaitForReadyAsync(stoppingToken);
+
         if (!Directory.Exists(_watchPath))
         {
             Directory.CreateDirectory(_watchPath);

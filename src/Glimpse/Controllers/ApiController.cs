@@ -66,21 +66,17 @@ public class ApiController : ControllerBase
         var screenshot = await _db.Screenshots.FindAsync(id);
         if (screenshot == null) return NotFound();
 
+        // Delete file from disk first - if this fails, don't remove from DB
+        if (System.IO.File.Exists(screenshot.Path))
+        {
+            System.IO.File.Delete(screenshot.Path);
+        }
+
         // Find next screenshot (by date, descending)
         var nextScreenshot = await _db.Screenshots
             .Where(s => s.CreatedAt < screenshot.CreatedAt)
             .OrderByDescending(s => s.CreatedAt)
             .FirstOrDefaultAsync();
-
-        // Delete file from disk
-        try
-        {
-            if (System.IO.File.Exists(screenshot.Path))
-            {
-                System.IO.File.Delete(screenshot.Path);
-            }
-        }
-        catch { /* ignore file deletion errors */ }
 
         // Remove from database
         _db.Screenshots.Remove(screenshot);

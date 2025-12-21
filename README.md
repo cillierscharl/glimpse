@@ -4,6 +4,11 @@ Never lose a screenshot again. Watches, indexes, and lets you search your screen
 
 ![Glimpse Screenshot](images/image.png)
 
+## Requirements
+
+- Docker with NVIDIA Container Toolkit (for GPU acceleration)
+- NVIDIA GPU with drivers installed
+
 ## Quick Start
 
 ```bash
