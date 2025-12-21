@@ -44,6 +44,10 @@ if (Directory.Exists(watchPath))
 
 app.UseRouting();
 
+// SSE endpoint for progress and screenshot updates
+app.MapGet("/api/progress/stream", (ScanProgressService progress, CancellationToken ct) =>
+    TypedResults.ServerSentEvents(progress.GetUpdatesAsync(ct)));
+
 app.MapControllerRoute(
     name: "detail",
     pattern: "detail/{id}",

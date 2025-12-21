@@ -105,31 +105,62 @@ else
 @if (progress?.IsScanning == true)
 {
     <script>
-        let lastCount = @(progress.AlreadyIndexed + progress.ProcessedFiles);
-        setInterval(() => {
-            fetch('/api/progress')
-                .then(r => r.json())
-                .then(p => {
-                    if (!p.isScanning) { location.reload(); return; }
-                    document.getElementById('progress-indexed').textContent = p.alreadyIndexed + p.processedFiles;
-                    document.getElementById('progress-total').textContent = p.totalFiles;
-                    document.getElementById('progress-percent').textContent = p.percentComplete;
-                    document.getElementById('progress-bar').style.width = `${p.percentComplete}%`;
-                    document.getElementById('progress-file').textContent = p.currentFile || '';
-                    
-                    // Reload grid if new screenshots were processed
-                    const newCount = p.alreadyIndexed + p.processedFiles;
-                    if (newCount > lastCount) {
-                        lastCount = newCount;
-                        fetch('/', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-                            .then(r => r.text())
-                            .then(html => {
-                                const grid = document.getElementById('screenshots-grid');
-                                if (grid) grid.innerHTML = html;
-                            });
-                    }
+        // Request notification permission
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+
+        const evtSource = new EventSource('/api/progress/stream');
+
+        evtSource.addEventListener('progress', (e) => {
+            const p = JSON.parse(e.data);
+            if (!p.IsScanning) {
+                evtSource.close();
+                document.getElementById('progress')?.remove();
+                // Final grid refresh
+                fetch('/', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                    .then(r => r.text())
+                    .then(html => {
+                        const grid = document.getElementById('screenshots-grid');
+                        if (grid) grid.innerHTML = html;
+                    });
+                return;
+            }
+
+            document.getElementById('progress-indexed').textContent = p.AlreadyIndexed + p.ProcessedFiles;
+            document.getElementById('progress-total').textContent = p.TotalFiles;
+            document.getElementById('progress-percent').textContent = p.PercentComplete;
+            document.getElementById('progress-bar').style.width = `${p.PercentComplete}%`;
+            document.getElementById('progress-file').textContent = p.CurrentFile || '';
+        });
+
+        evtSource.addEventListener('screenshot', (e) => {
+            const s = JSON.parse(e.data);
+
+            // Refresh grid
+            fetch('/', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                .then(r => r.text())
+                .then(html => {
+                    const grid = document.getElementById('screenshots-grid');
+                    if (grid) grid.innerHTML = html;
                 });
-        }, 2000);
+
+            // Show browser notification
+            if ('Notification' in window && Notification.permission === 'granted') {
+                const n = new Notification('Screenshot indexed', {
+                    body: s.Filename,
+                    icon: '/screenshots/' + s.Filename,
+                    tag: 'screenshot-' + s.Id
+                });
+                n.onclick = () => {
+                    window.focus();
+                    window.location.href = '/detail/' + s.Id;
+                    n.close();
+                };
+            }
+        });
+
+        evtSource.onerror = () => evtSource.close();
     </script>
 }
 

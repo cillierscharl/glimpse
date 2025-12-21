@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 using Glimpse.Data;
 using Glimpse.Models;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,8 @@ public class ScreenshotWatcherService : BackgroundService
     private readonly string _watchPath;
     private readonly string[] _extensions;
     private readonly ConcurrentDictionary<string, DateTime> _recentFiles = new();
+    private readonly Channel<string> _priorityQueue = Channel.CreateUnbounded<string>();
+    private readonly Channel<string> _backlogQueue = Channel.CreateUnbounded<string>();
     private FileSystemWatcher? _watcher;
 
     public ScreenshotWatcherService(
@@ -27,7 +30,7 @@ public class ScreenshotWatcherService : BackgroundService
         _ocrService = ocrService;
         _progress = progress;
         _logger = logger;
-        _watchPath = config.GetValue<string>("Screenshots:WatchPath") 
+        _watchPath = config.GetValue<string>("Screenshots:WatchPath")
             ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Pictures/Screenshots");
         _extensions = config.GetSection("Screenshots:Extensions").Get<string[]>() ?? [".png", ".jpg", ".jpeg"];
     }
@@ -51,40 +54,53 @@ public class ScreenshotWatcherService : BackgroundService
 
         _logger.LogInformation("Watching for screenshots in: {Path}", _watchPath);
 
-        // Process existing images in background (don't block startup)
-        _ = Task.Run(() => ProcessExistingImagesAsync(stoppingToken), stoppingToken);
-
-        // Keep the service running
-        await Task.Delay(Timeout.Infinite, stoppingToken);
+        // Process images from queue
+        await ProcessQueueAsync(stoppingToken);
     }
 
     private async void OnFileCreated(object sender, FileSystemEventArgs e)
     {
-        if (!IsValidExtension(e.FullPath)) return;
+        try
+        {
+            if (!IsValidExtension(e.FullPath)) return;
 
-        // Debounce: ignore if we've seen this file recently
-        var now = DateTime.UtcNow;
-        if (_recentFiles.TryGetValue(e.FullPath, out var lastSeen) && (now - lastSeen).TotalSeconds < 2)
-            return;
-        _recentFiles[e.FullPath] = now;
+            // Debounce: ignore if we've seen this file recently
+            var now = DateTime.UtcNow;
+            if (_recentFiles.TryGetValue(e.FullPath, out var lastSeen) && (now - lastSeen).TotalSeconds < 2)
+                return;
+            _recentFiles[e.FullPath] = now;
 
-        // Wait for file to be fully written
-        await Task.Delay(500);
-        await ProcessImageAsync(e.FullPath);
+            // Clean up old entries (older than 1 minute)
+            var cutoff = now.AddMinutes(-1);
+            foreach (var key in _recentFiles.Keys)
+            {
+                if (_recentFiles.TryGetValue(key, out var time) && time < cutoff)
+                    _recentFiles.TryRemove(key, out _);
+            }
+
+            // Wait for file to be fully written, then add to priority queue
+            await Task.Delay(500);
+            _logger.LogInformation("New screenshot detected, adding to priority queue: {Path}", e.FullPath);
+            await _priorityQueue.Writer.WriteAsync(e.FullPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling new file: {Path}", e.FullPath);
+        }
     }
 
-    private async Task ProcessExistingImagesAsync(CancellationToken stoppingToken)
+    private async Task ProcessQueueAsync(CancellationToken stoppingToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<GlimpseDbContext>();
 
         var existingPaths = (await db.Screenshots.Select(s => s.Path).ToListAsync(stoppingToken)).ToHashSet();
-        
+
         var allFiles = Directory.EnumerateFiles(_watchPath)
             .Where(f => IsValidExtension(f))
             .ToList();
 
-        var filesToProcess = allFiles
+        var backlogFiles = allFiles
             .Where(f => !existingPaths.Contains(f))
             .OrderByDescending(f => File.GetCreationTimeUtc(f))
             .ToList();
@@ -92,31 +108,66 @@ public class ScreenshotWatcherService : BackgroundService
         _progress.TotalFiles = allFiles.Count;
         _progress.AlreadyIndexed = existingPaths.Count;
         _progress.ProcessedFiles = 0;
-        _progress.IsScanning = filesToProcess.Count > 0;
-        
-        _logger.LogInformation("Found {Count} new screenshots to process ({Indexed} already indexed)", 
-            filesToProcess.Count, existingPaths.Count);
+        _progress.IsScanning = backlogFiles.Count > 0;
 
-        // Process in parallel with limited concurrency
-        var parallelOptions = new ParallelOptions
-        {
-            MaxDegreeOfParallelism = 2,
-            CancellationToken = stoppingToken
-        };
+        _logger.LogInformation("Found {Count} new screenshots to process ({Indexed} already indexed)",
+            backlogFiles.Count, existingPaths.Count);
 
-        await Parallel.ForEachAsync(filesToProcess, parallelOptions, async (file, ct) =>
+        // Queue backlog files
+        foreach (var file in backlogFiles)
         {
-            _progress.CurrentFile = Path.GetFileName(file);
-            await ProcessImageAsync(file, ct);
-            Interlocked.Increment(ref _progress._processedFiles);
-        });
-        
+            await _backlogQueue.Writer.WriteAsync(file, stoppingToken);
+        }
+        _backlogQueue.Writer.Complete();
+
+        // Process with 2 parallel workers
+        await Task.WhenAll(
+            ProcessWorkerAsync(stoppingToken),
+            ProcessWorkerAsync(stoppingToken)
+        );
+
         _progress.IsScanning = false;
         _progress.CurrentFile = null;
-        _logger.LogInformation("Finished processing all screenshots");
+        _progress.NotifyChange();
+        _logger.LogInformation("Finished processing backlog");
+
+        // Continue listening for new files
+        await foreach (var file in _priorityQueue.Reader.ReadAllAsync(stoppingToken))
+        {
+            _progress.CurrentFile = Path.GetFileName(file);
+            _progress.NotifyChange();
+            await ProcessImageAsync(file, stoppingToken, notify: true);
+        }
     }
 
-    private async Task ProcessImageAsync(string path, CancellationToken cancellationToken = default)
+    private async Task ProcessWorkerAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            // Priority: drain all new files first
+            while (_priorityQueue.Reader.TryRead(out var priorityFile))
+            {
+                _progress.CurrentFile = Path.GetFileName(priorityFile);
+                _progress.NotifyChange();
+                await ProcessImageAsync(priorityFile, ct, notify: true);
+                _progress.NotifyChange();
+            }
+
+            // Then take one from backlog
+            if (!_backlogQueue.Reader.TryRead(out var file))
+            {
+                break; // Backlog empty
+            }
+
+            _progress.CurrentFile = Path.GetFileName(file);
+            _progress.NotifyChange();
+            await ProcessImageAsync(file, ct, notify: false);
+            Interlocked.Increment(ref _progress._processedFiles);
+            _progress.NotifyChange();
+        }
+    }
+
+    private async Task ProcessImageAsync(string path, CancellationToken cancellationToken = default, bool notify = false)
     {
         try
         {
@@ -128,13 +179,19 @@ public class ScreenshotWatcherService : BackgroundService
 
             if (await db.Screenshots.AnyAsync(s => s.Path == path, cancellationToken)) return;
 
-            db.Screenshots.Add(new Screenshot
+            var screenshot = new Screenshot
             {
                 Path = path,
                 OcrText = text,
                 CreatedAt = File.GetCreationTimeUtc(path)
-            });
+            };
+            db.Screenshots.Add(screenshot);
             await db.SaveChangesAsync(cancellationToken);
+
+            if (notify)
+            {
+                _progress.NotifyScreenshotIndexed(screenshot.Id, Path.GetFileName(path));
+            }
             _logger.LogInformation("Indexed: {Path} ({Length} chars)", path, text.Length);
         }
         catch (Exception ex)
