@@ -20,7 +20,7 @@ public class OcrService
         _logger = logger;
         _baseUrl = config.GetValue<string>("Ollama:BaseUrl") ?? "http://localhost:11434";
         _model = config.GetValue<string>("Ollama:Model") ?? "minicpm-v";
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
         Status = "Waiting for Ollama...";
     }
 

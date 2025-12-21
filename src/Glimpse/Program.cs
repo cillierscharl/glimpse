@@ -17,6 +17,7 @@ builder.Services.AddDbContext<GlimpseDbContext>(options =>
 // Services
 builder.Services.AddSingleton<OcrService>();
 builder.Services.AddSingleton<ScanProgressService>();
+builder.Services.AddSingleton<GpuStatsService>();
 builder.Services.AddHostedService<ScreenshotWatcherService>();
 
 var app = builder.Build();
@@ -47,6 +48,10 @@ app.UseRouting();
 // SSE endpoint for progress and screenshot updates
 app.MapGet("/api/progress/stream", (ScanProgressService progress, CancellationToken ct) =>
     TypedResults.ServerSentEvents(progress.GetUpdatesAsync(ct)));
+
+// GPU stats endpoint
+app.MapGet("/api/gpu", async (GpuStatsService gpu) =>
+    await gpu.GetStatsAsync() is { } stats ? Results.Ok(stats) : Results.NoContent());
 
 app.MapControllerRoute(
     name: "detail",

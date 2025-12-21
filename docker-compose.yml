@@ -6,12 +6,21 @@ services:
     volumes:
       - ./data:/data
       - ${SCREENSHOTS_PATH:-~/Pictures/Screenshots}:/screenshots
+      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
+      - /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
     environment:
       - ASPNETCORE_URLS=http://+:5123
       - Ollama__BaseUrl=http://ollama:11434
     depends_on:
       - ollama
     restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   ollama:
     image: ollama/ollama:latest

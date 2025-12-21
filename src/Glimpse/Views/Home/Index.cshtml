@@ -82,6 +82,27 @@ else if (progress?.IsScanning == true)
         </div>
     </form>
 </div>
+<!-- Stats for nerds -->
+<div class="mt-12 mb-12 border-t border-dark-800 pt-6">
+    <button onclick="toggleStats()" class="flex items-center gap-2 text-sm text-dark-500 hover:text-dark-400 transition-colors">
+        <span>Stats for nerds</span>
+        <svg id="stats-arrow" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+    </button>
+    <div id="stats-content" style="display: none;" class="mt-4">
+        <div id="gpu-stats" style="display: none;" class="bg-dark-900 rounded-xl border border-dark-800 p-4 font-mono text-xs">
+            <div class="grid grid-cols-2 gap-x-8 gap-y-2 text-dark-400">
+                <div>GPU</div><div id="gpu-name" class="text-dark-300">-</div>
+                <div>Temperature</div><div id="gpu-temp" class="text-dark-300">-</div>
+                <div>Power</div><div id="gpu-power" class="text-dark-300">-</div>
+                <div>VRAM</div><div id="gpu-mem" class="text-dark-300">-</div>
+                <div>Utilization</div><div id="gpu-util" class="text-dark-300">-</div>
+            </div>
+        </div>
+        <p id="gpu-unavailable" class="text-xs text-dark-600 mt-2" style="display: none;">GPU stats unavailable</p>
+    </div>
+</div>
 
 @if (Model.Count == 0)
 {
@@ -228,4 +249,33 @@ else
             });
         }
     });
+
+    // GPU stats
+    async function loadGpuStats() {
+        try {
+            const r = await fetch('/api/gpu');
+            if (!r.ok) return;
+            const g = await r.json();
+            document.getElementById('gpu-name').textContent = g.name;
+            document.getElementById('gpu-temp').textContent = g.temperatureC + '°C';
+            document.getElementById('gpu-power').textContent = g.powerDrawW.toFixed(0) + 'W / ' + g.powerLimitW.toFixed(0) + 'W';
+            document.getElementById('gpu-mem').textContent = g.memoryUsedMB + ' / ' + g.memoryTotalMB + ' MB';
+            document.getElementById('gpu-util').textContent = g.utilizationPercent + '%';
+            document.getElementById('gpu-stats').style.display = 'block';
+        } catch {}
+    }
+
+    function toggleStats() {
+        const content = document.getElementById('stats-content');
+        const arrow = document.getElementById('stats-arrow');
+        if (content.style.display === 'none') {
+            content.style.display = 'block';
+            arrow.style.transform = 'rotate(180deg)';
+            loadGpuStats();
+        } else {
+            content.style.display = 'none';
+            arrow.style.transform = '';
+        }
+    }
 </script>
+
