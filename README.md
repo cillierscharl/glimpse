@@ -2,92 +2,35 @@
 
 Never lose a screenshot again. Watches, indexes, and lets you search your screen captures by text content.
 
-![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker)
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
-
 ![Glimpse Screenshot](images/image.png)
-
-## Features
-
-- 📁 **Auto-watch** - Monitors your screenshot folder for new images
-- 🔍 **Local Vision OCR** - Extracts text using Ollama (fully offline, no cloud)
-- 📅 **Date Search** - Search by date (e.g., "Nov 26", "2024-11-26")
-- 📋 **Copy to Clipboard** - Copy screenshots or extracted text
 
 ## Quick Start
 
-### Using Docker (Recommended)
-
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/glimpse.git
+git clone https://github.com/cillierscharl/glimpse.git
 cd glimpse
-
-# Run with Docker Compose
 SCREENSHOTS_PATH="$HOME/Pictures/Screenshots" docker compose up -d
-
-# Open in browser
-open http://localhost:5123
 ```
 
-The first run will download the Ollama vision model (~5GB) and start indexing your screenshots.
+Open http://localhost:5123
 
-### GPU Acceleration (NVIDIA)
+The first run downloads the minicpm-v vision model (~5GB) and starts indexing your screenshots.
 
-For much faster OCR processing, enable GPU support:
+## Features
 
-```bash
-# Install NVIDIA Container Toolkit
-./scripts/install-nvidia-docker.sh
-
-# Restart containers
-docker compose down && docker compose up -d
-```
-
-### Configuration
-
-Set `SCREENSHOTS_PATH` to the folder you want to watch:
-
-```bash
-SCREENSHOTS_PATH="/path/to/your/screenshots" docker compose up -d
-```
+- **Auto-watch** - Monitors your screenshot folder for new images
+- **Local OCR** - Extracts text using minicpm-v vision model (fully offline)
+- **Search** - Find screenshots by text content or date
+- **Notes** - Add personal notes to screenshots
+- **Real-time** - New screenshots are prioritized and indexed immediately
 
 ## How It Works
 
-1. **Watch** - Monitors your screenshot directory for new images
-2. **OCR** - Images processed with local Ollama vision model (minicpm-v)
-3. **Index** - Text and metadata stored in SQLite database
-4. **Search** - Web UI lets you search by text content or date
-
-## Tech Stack
-
-- .NET 10 / ASP.NET Core MVC
-- SQLite + Entity Framework Core  
-- Ollama (minicpm-v vision model)
-- Docker
-
-## Project Structure
-
-```
-glimpse/
-├── src/Glimpse/
-│   ├── Controllers/     # MVC controllers
-│   ├── Data/            # EF Core DbContext
-│   ├── Models/          # Data models
-│   ├── Services/        # Background services (OCR, file watcher)
-│   ├── Views/           # Razor views
-│   └── Program.cs       # Application entry point
-├── scripts/             # Setup scripts
-├── docker-compose.yml
-├── Dockerfile
-└── README.md
-```
+1. Watches your screenshot directory for new images
+2. Extracts text using minicpm-v vision model (via Ollama)
+3. Stores text and metadata in SQLite with full-text search
+4. Web UI lets you search by content or date (e.g., "Nov 26", "error message")
 
 ## Privacy
 
-All processing happens locally on your machine. Screenshots never leave your computer - the Ollama vision model runs entirely offline.
-
-## License
-
-MIT
+All processing happens locally. Screenshots never leave your machine.
