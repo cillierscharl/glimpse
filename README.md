@@ -2,20 +2,18 @@
 
 Never lose a screenshot again. Watches, indexes, and lets you search your screen captures by text content.
 
-![Glimpse Screenshot Search](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)
+![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
+
+![Glimpse Screenshot](images/image.png)
 
 ## Features
 
 - 📁 **Auto-watch** - Monitors your screenshot folder for new images
-- 🔍 **Vision AI OCR** - Extracts text using local Ollama vision model (no cloud, fully private)
-- ⚡ **Instant Results** - Full-text search across all your screenshots
-- 📅 **Date Search** - Search by date (e.g., "Nov 26", "November", "2024-11-26")
-- 📋 **One-click Copy** - Copy any screenshot or extracted text to clipboard
-- 🎨 **Modern UI** - Clean, dark-themed interface with Tailwind CSS
-- ♾️ **Infinite Scroll** - Smooth pagination as you browse
-- 🔄 **Live Updates** - New screenshots appear automatically during scanning
+- 🔍 **Local Vision OCR** - Extracts text using Ollama (fully offline, no cloud)
+- 📅 **Date Search** - Search by date (e.g., "Nov 26", "2024-11-26")
+- 📋 **Copy to Clipboard** - Copy screenshots or extracted text
 
 ## Quick Start
 
@@ -64,11 +62,10 @@ SCREENSHOTS_PATH="/path/to/your/screenshots" docker compose up -d
 
 ## Tech Stack
 
-- **.NET 10** - ASP.NET Core MVC
-- **SQLite** - Local database with Entity Framework Core
-- **Ollama** - Local vision AI for OCR (minicpm-v model)
-- **Tailwind CSS** - Modern styling via CDN
-- **Docker** - Containerized deployment
+- .NET 10 / ASP.NET Core MVC
+- SQLite + Entity Framework Core  
+- Ollama (minicpm-v vision model)
+- Docker
 
 ## Project Structure
 

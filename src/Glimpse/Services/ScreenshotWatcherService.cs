@@ -80,15 +80,19 @@ public class ScreenshotWatcherService : BackgroundService
 
         var existingPaths = (await db.Screenshots.Select(s => s.Path).ToListAsync(stoppingToken)).ToHashSet();
         
-        var filesToProcess = Directory.EnumerateFiles(_watchPath)
-            .Where(f => IsValidExtension(f) && !existingPaths.Contains(f))
+        var allFiles = Directory.EnumerateFiles(_watchPath)
+            .Where(f => IsValidExtension(f))
             .ToList();
+            
+        var filesToProcess = allFiles.Where(f => !existingPaths.Contains(f)).ToList();
 
-        _progress.TotalFiles = filesToProcess.Count;
+        _progress.TotalFiles = allFiles.Count;
+        _progress.AlreadyIndexed = existingPaths.Count;
         _progress.ProcessedFiles = 0;
         _progress.IsScanning = filesToProcess.Count > 0;
         
-        _logger.LogInformation("Found {Count} new screenshots to process", filesToProcess.Count);
+        _logger.LogInformation("Found {Count} new screenshots to process ({Indexed} already indexed)", 
+            filesToProcess.Count, existingPaths.Count);
 
         // Process in parallel with limited concurrency
         var parallelOptions = new ParallelOptions

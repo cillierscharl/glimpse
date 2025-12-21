@@ -65,6 +65,22 @@ public class HomeController : Controller
         if (screenshot == null) return NotFound();
         
         ViewBag.ReturnQuery = q;
+        
+        // Get image dimensions
+        var filename = Path.GetFileName(screenshot.Path);
+        var imagePath = Path.Combine("/screenshots", filename);
+        ViewBag.ImageWidth = 0;
+        ViewBag.ImageHeight = 0;
+        
+        try
+        {
+            using var stream = System.IO.File.OpenRead(screenshot.Path);
+            using var image = await SixLabors.ImageSharp.Image.LoadAsync(stream);
+            ViewBag.ImageWidth = image.Width;
+            ViewBag.ImageHeight = image.Height;
+        }
+        catch { /* ignore if can't read dimensions */ }
+        
         return View(screenshot);
     }
 

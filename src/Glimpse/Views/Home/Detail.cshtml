@@ -13,11 +13,11 @@
     </a>
 </div>
 
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-    <!-- Image -->
+<div class="space-y-8">
+    <!-- Image - Full Width -->
     <div>
         <div class="rounded-2xl overflow-hidden bg-dark-900 border border-dark-800">
-            <img src="/screenshots/@filename" alt="Screenshot" class="w-full h-auto">
+            <img src="/screenshots/@filename" alt="Screenshot" class="max-w-full h-auto">
         </div>
         <div class="mt-4 flex gap-3">
             <button onclick="copyImageToClipboard('/screenshots/@filename')" 
@@ -34,11 +34,27 @@
                 </svg>
                 Download
             </a>
+            <div class="w-32">
+                <button id="delete-btn" onclick="showDeleteConfirm()" 
+                        class="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-medium rounded-xl border border-red-500/20 transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Delete
+                </button>
+                <button id="confirm-delete-btn" onclick="deleteScreenshot(@Model.Id)" 
+                        class="hidden w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-medium rounded-xl transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Confirm
+                </button>
+            </div>
         </div>
     </div>
 
-    <!-- Details -->
-    <div class="space-y-6">
+    <!-- Details Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div class="bg-dark-900 rounded-2xl border border-dark-800 p-6">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-semibold text-dark-100">Extracted Text</h2>
@@ -50,7 +66,7 @@
                     Copy Text
                 </button>
             </div>
-            <div id="ocr-text" class="text-dark-400 text-sm whitespace-pre-wrap font-mono bg-dark-950 rounded-xl p-4 max-h-96 overflow-y-auto scrollbar-thin">@(string.IsNullOrEmpty(Model.OcrText) ? "No text detected" : Model.OcrText)</div>
+            <div id="ocr-text" class="text-dark-400 text-sm whitespace-pre-wrap font-mono bg-dark-950 rounded-xl p-4 overflow-x-auto scrollbar-thin">@(string.IsNullOrEmpty(Model.OcrText) ? "No text detected" : Model.OcrText)</div>
         </div>
 
         <div class="bg-dark-900 rounded-2xl border border-dark-800 p-6">
@@ -60,6 +76,13 @@
                     <dt class="text-dark-500">Filename</dt>
                     <dd class="text-dark-300">@filename</dd>
                 </div>
+                @if (ViewBag.ImageWidth > 0)
+                {
+                    <div class="flex justify-between">
+                        <dt class="text-dark-500">Resolution</dt>
+                        <dd class="text-dark-300">@ViewBag.ImageWidth × @ViewBag.ImageHeight</dd>
+                    </div>
+                }
                 <div class="flex justify-between">
                     <dt class="text-dark-500">Created</dt>
                     <dd class="text-dark-300">@Model.CreatedAt.ToString("MMMM d, yyyy h:mm tt")</dd>
@@ -81,6 +104,35 @@
             showToast('Text copied to clipboard!', 'success');
         } catch (e) {
             showToast('Failed to copy text', 'error');
+        }
+    }
+    
+    let confirmTimeout;
+    function showDeleteConfirm() {
+        document.getElementById('delete-btn').classList.add('hidden');
+        document.getElementById('confirm-delete-btn').classList.remove('hidden');
+        clearTimeout(confirmTimeout);
+        confirmTimeout = setTimeout(() => {
+            document.getElementById('delete-btn').classList.remove('hidden');
+            document.getElementById('confirm-delete-btn').classList.add('hidden');
+        }, 3000);
+    }
+    
+    async function deleteScreenshot(id) {
+        try {
+            const response = await fetch(`/api/screenshots/${id}`, { method: 'DELETE' });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.nextId) {
+                    window.location.href = `/detail/${data.nextId}`;
+                } else {
+                    window.location.href = '/';
+                }
+            } else {
+                showToast('Failed to delete screenshot', 'error');
+            }
+        } catch (e) {
+            showToast('Failed to delete screenshot', 'error');
         }
     }
 </script>

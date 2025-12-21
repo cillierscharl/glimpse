@@ -45,6 +45,11 @@ if (Directory.Exists(watchPath))
 app.UseRouting();
 
 app.MapControllerRoute(
+    name: "detail",
+    pattern: "detail/{id}",
+    defaults: new { controller = "Home", action = "Detail" });
+
+app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}");
 

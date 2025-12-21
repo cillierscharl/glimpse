@@ -23,7 +23,7 @@
                 </div>
             </div>
             <div class="text-right">
-                <p class="text-sm font-semibold text-dark-100" id="progress-stats">@progress.ProcessedFiles / @progress.TotalFiles</p>
+                <p class="text-sm font-semibold text-dark-100"><span id="progress-indexed">@(progress.AlreadyIndexed + progress.ProcessedFiles)</span> / <span id="progress-total">@progress.TotalFiles</span> indexed</p>
                 <p class="text-xs text-dark-500"><span id="progress-percent">@progress.PercentComplete</span>% complete</p>
             </div>
         </div>
@@ -118,37 +118,18 @@ else
 @if (progress?.IsScanning == true)
 {
     <script>
-        let lastProcessed = 0;
         setInterval(() => {
             fetch('/api/progress')
                 .then(r => r.json())
                 .then(p => {
                     if (!p.isScanning) { location.reload(); return; }
-                    document.getElementById('progress-stats').textContent = `${p.processedFiles} / ${p.totalFiles}`;
+                    document.getElementById('progress-indexed').textContent = p.alreadyIndexed + p.processedFiles;
+                    document.getElementById('progress-total').textContent = p.totalFiles;
                     document.getElementById('progress-percent').textContent = p.percentComplete;
                     document.getElementById('progress-bar').style.width = `${p.percentComplete}%`;
                     document.getElementById('progress-file').textContent = p.currentFile || '';
-                    
-                    // Refresh grid when new images are processed
-                    if (p.processedFiles > lastProcessed) {
-                        lastProcessed = p.processedFiles;
-                        refreshGrid();
-                    }
                 });
         }, 2000);
-        
-        function refreshGrid() {
-            const query = '@(query ?? "")';
-            const url = query ? `/?q=${encodeURIComponent(query)}` : '/';
-            fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-                .then(r => r.text())
-                .then(html => {
-                    const grid = document.getElementById('screenshots-grid');
-                    if (grid && html.trim()) {
-                        grid.innerHTML = html;
-                    }
-                });
-        }
     </script>
 }
 

@@ -6,7 +6,7 @@
 @foreach (var screenshot in Model)
 {
     var filename = System.IO.Path.GetFileName(screenshot.Path);
-    <a href="/Home/Detail/@screenshot.Id@(query != null ? "?q=" + query : "")" class="group bg-dark-900 rounded-2xl border border-dark-800 overflow-hidden hover:border-dark-700 hover:shadow-xl hover:shadow-dark-950/50 transition-all duration-300 block">
+    <a href="/detail/@screenshot.Id@(query != null ? "?q=" + query : "")" class="group bg-dark-900 rounded-2xl border border-dark-800 overflow-hidden hover:border-dark-700 hover:shadow-xl hover:shadow-dark-950/50 transition-all duration-300 block">
         <div class="aspect-video relative overflow-hidden">
             <img src="/screenshots/@filename" 
                  alt="Screenshot" 
