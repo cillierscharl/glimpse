@@ -1,6 +1,7 @@
 using Glimpse.Data;
 using Glimpse.Models;
 using Microsoft.EntityFrameworkCore;
+using Xunit;
 
 namespace Glimpse.Tests;
 

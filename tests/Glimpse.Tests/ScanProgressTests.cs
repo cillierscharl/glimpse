@@ -1,4 +1,5 @@
 using Glimpse.Services;
+using Xunit;
 
 namespace Glimpse.Tests;
 
