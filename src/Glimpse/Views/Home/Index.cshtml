@@ -140,82 +140,48 @@ else
     </div>
 }
 
-@if (progress?.OllamaStatus != null || progress?.IsScanning == true)
-{
-    <script>
-        // Request notification permission
-        if ('Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission();
+<script>
+    // Index page: add progress bar updates and grid refresh to shared SSE connection
+    window.glimpseEvents.addEventListener('progress', (e) => {
+        const p = JSON.parse(e.data);
+
+        // Handle Ollama status
+        const ollamaEl = document.getElementById('ollama-status');
+        const progressEl = document.getElementById('progress');
+
+        if (p.OllamaStatus) {
+            const statusText = document.getElementById('ollama-status-text');
+            if (statusText) statusText.textContent = p.OllamaStatus;
+            if (progressEl) progressEl.style.display = 'none';
+            return;
+        } else if (ollamaEl) {
+            ollamaEl.remove();
+            location.reload(); // Reload to show scan progress properly
+            return;
         }
 
-        const evtSource = new EventSource('/api/progress/stream');
+        if (!p.IsScanning) {
+            progressEl?.remove();
+            return;
+        }
 
-        evtSource.addEventListener('progress', (e) => {
-            const p = JSON.parse(e.data);
+        document.getElementById('progress-indexed').textContent = p.AlreadyIndexed + p.ProcessedFiles;
+        document.getElementById('progress-total').textContent = p.TotalFiles;
+        document.getElementById('progress-percent').textContent = p.PercentComplete;
+        document.getElementById('progress-bar').style.width = `${p.PercentComplete}%`;
+        document.getElementById('progress-file').textContent = p.CurrentFile || '';
+    });
 
-            // Handle Ollama status
-            const ollamaEl = document.getElementById('ollama-status');
-            const progressEl = document.getElementById('progress');
-
-            if (p.OllamaStatus) {
-                document.getElementById('ollama-status-text').textContent = p.OllamaStatus;
-                if (progressEl) progressEl.style.display = 'none';
-                return;
-            } else if (ollamaEl) {
-                ollamaEl.remove();
-                location.reload(); // Reload to show scan progress properly
-                return;
-            }
-
-            if (!p.IsScanning) {
-                evtSource.close();
-                progressEl?.remove();
-                // Final grid refresh
-                fetch('/', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-                    .then(r => r.text())
-                    .then(html => {
-                        const grid = document.getElementById('screenshots-grid');
-                        if (grid) grid.innerHTML = html;
-                    });
-                return;
-            }
-
-            document.getElementById('progress-indexed').textContent = p.AlreadyIndexed + p.ProcessedFiles;
-            document.getElementById('progress-total').textContent = p.TotalFiles;
-            document.getElementById('progress-percent').textContent = p.PercentComplete;
-            document.getElementById('progress-bar').style.width = `${p.PercentComplete}%`;
-            document.getElementById('progress-file').textContent = p.CurrentFile || '';
-        });
-
-        evtSource.addEventListener('screenshot', (e) => {
-            const s = JSON.parse(e.data);
-
-            // Refresh grid
-            fetch('/', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-                .then(r => r.text())
-                .then(html => {
-                    const grid = document.getElementById('screenshots-grid');
-                    if (grid) grid.innerHTML = html;
-                });
-
-            // Show browser notification
-            if ('Notification' in window && Notification.permission === 'granted') {
-                const n = new Notification('Screenshot indexed', {
-                    body: s.Filename,
-                    icon: '/screenshots/' + s.Filename,
-                    tag: 'screenshot-' + s.Id
-                });
-                n.onclick = () => {
-                    window.focus();
-                    window.location.href = '/detail/' + s.Id;
-                    n.close();
-                };
-            }
-        });
-
-        evtSource.onerror = () => evtSource.close();
-    </script>
-}
+    // Refresh grid when new screenshot is indexed
+    window.glimpseEvents.addEventListener('screenshot', (e) => {
+        fetch('/', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(r => r.text())
+            .then(html => {
+                const grid = document.getElementById('screenshots-grid');
+                if (grid) grid.innerHTML = html;
+            });
+    });
+</script>
 
 <script>
     // Focus search input and move cursor to end

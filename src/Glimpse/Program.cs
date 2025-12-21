@@ -7,6 +7,13 @@ var builder = WebApplication.CreateBuilder(args);
 // Add MVC
 builder.Services.AddControllersWithViews();
 
+// Add Swagger
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new() { Title = "Glimpse API", Version = "v1" });
+});
+
 // Database
 var dbPath = builder.Configuration.GetValue<string>("Database:Path") 
     ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "glimpse", "glimpse.db");
@@ -30,6 +37,10 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.UseStaticFiles();
+
+// Swagger
+app.UseSwagger();
+app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Glimpse API v1"));
 
 // Serve screenshot files
 var watchPath = builder.Configuration.GetValue<string>("Screenshots:WatchPath")

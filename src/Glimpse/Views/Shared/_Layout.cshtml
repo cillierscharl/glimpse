@@ -73,6 +73,35 @@
     <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2"></div>
 
     <script>
+        // SSE connection for real-time updates (shared across all pages)
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+
+        window.glimpseEvents = new EventSource('/api/progress/stream');
+
+        window.glimpseEvents.addEventListener('screenshot', (e) => {
+            const s = JSON.parse(e.data);
+
+            // Show browser notification
+            if ('Notification' in window && Notification.permission === 'granted') {
+                const n = new Notification('Screenshot indexed', {
+                    body: s.Filename,
+                    icon: '/screenshots/' + s.Filename,
+                    tag: 'screenshot-' + s.Id
+                });
+                n.onclick = () => {
+                    window.focus();
+                    window.location.href = '/detail/' + s.Id;
+                    n.close();
+                };
+            }
+        });
+
+        window.glimpseEvents.onerror = () => window.glimpseEvents.close();
+    </script>
+
+    <script>
         // Copy image to clipboard using browser API
         async function copyImageToClipboard(src) {
             try {

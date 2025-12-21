@@ -35,7 +35,7 @@ public class ScanProgressService
         // Send initial progress state
         yield return new SseItem<string>(JsonSerializer.Serialize(GetCurrentUpdate()), "progress");
 
-        while (!ct.IsCancellationRequested && IsScanning)
+        while (!ct.IsCancellationRequested)
         {
             var tcs = new TaskCompletionSource<SseItem<string>>();
 
@@ -64,9 +64,6 @@ public class ScanProgressService
 
             if (result.HasValue) yield return result.Value;
         }
-
-        // Send final progress state
-        yield return new SseItem<string>(JsonSerializer.Serialize(GetCurrentUpdate()), "progress");
     }
 
     private ProgressUpdate GetCurrentUpdate() => new(
