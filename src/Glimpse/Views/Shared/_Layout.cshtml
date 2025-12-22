@@ -37,6 +37,42 @@
             .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #8e8ea0; }
         }
     </style>
+    <script>
+        // SSE connection with auto-reconnect
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+        window.glimpseConnected = false;
+        window.glimpseListeners = []; // Store listeners to re-attach on reconnect
+
+        // Wrapper to register listeners that persist across reconnects
+        window.onGlimpseEvent = function(event, handler) {
+            window.glimpseListeners.push({ event, handler });
+            window.glimpseEvents?.addEventListener(event, handler);
+        };
+
+        function connectSSE() {
+            window.glimpseEvents = new EventSource('/api/progress/stream');
+
+            // Re-attach all registered listeners
+            window.glimpseListeners.forEach(({ event, handler }) => {
+                window.glimpseEvents.addEventListener(event, handler);
+            });
+
+            window.glimpseEvents.onopen = () => {
+                if (window.glimpseConnected) {
+                    window.showToast?.('Reconnected!', 'success');
+                }
+                window.glimpseConnected = true;
+            };
+            window.glimpseEvents.onerror = () => {
+                window.glimpseEvents.close();
+                setTimeout(connectSSE, 3000);
+            };
+        }
+        connectSSE();
+        window.addEventListener('beforeunload', () => window.glimpseEvents?.close());
+    </script>
 </head>
 <body class="bg-dark-950 text-dark-100 min-h-screen antialiased scrollbar-thin">
     <div class="min-h-screen flex flex-col">
@@ -73,17 +109,9 @@
     <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2"></div>
 
     <script>
-        // SSE connection for real-time updates (shared across all pages)
-        if ('Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission();
-        }
-
-        window.glimpseEvents = new EventSource('/api/progress/stream');
-
-        window.glimpseEvents.addEventListener('screenshot', (e) => {
+        // Browser notifications for new screenshots (works on all pages)
+        onGlimpseEvent('screenshot', (e) => {
             const s = JSON.parse(e.data);
-
-            // Show browser notification
             if ('Notification' in window && Notification.permission === 'granted') {
                 const n = new Notification('Screenshot indexed', {
                     body: s.Filename,
@@ -97,8 +125,6 @@
                 };
             }
         });
-
-        window.glimpseEvents.onerror = () => window.glimpseEvents.close();
     </script>
 
     <script>
@@ -118,7 +144,7 @@
         }
 
         // Toast
-        function showToast(message, type = 'success') {
+        window.showToast = function(message, type = 'success') {
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
             const colors = type === 'success' 

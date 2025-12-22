@@ -1,6 +1,7 @@
 using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Glimpse.Models;
 
 namespace Glimpse.Services;
 
@@ -24,10 +25,16 @@ public class ScanProgressService
 
     public event Action? OnProgressChange;
     public event Action<ScreenshotNotification>? OnScreenshotIndexed;
+    public event Action<ScreenshotDetectedNotification>? OnScreenshotDetected;
+    public event Action<ScreenshotStatusChangedNotification>? OnScreenshotStatusChanged;
 
     public void NotifyChange() => OnProgressChange?.Invoke();
     public void NotifyScreenshotIndexed(int id, string filename) =>
         OnScreenshotIndexed?.Invoke(new ScreenshotNotification(id, filename));
+    public void NotifyScreenshotDetected(int id, string filename) =>
+        OnScreenshotDetected?.Invoke(new ScreenshotDetectedNotification(id, filename));
+    public void NotifyScreenshotStatusChanged(int id, ScreenshotStatus status, string? ocrText = null) =>
+        OnScreenshotStatusChanged?.Invoke(new ScreenshotStatusChangedNotification(id, status, ocrText));
 
     public async IAsyncEnumerable<SseItem<string>> GetUpdatesAsync(
         [EnumeratorCancellation] CancellationToken ct)
@@ -43,9 +50,15 @@ public class ScanProgressService
                 tcs.TrySetResult(new SseItem<string>(JsonSerializer.Serialize(GetCurrentUpdate()), "progress"));
             Action<ScreenshotNotification> screenshotHandler = (s) =>
                 tcs.TrySetResult(new SseItem<string>(JsonSerializer.Serialize(s), "screenshot"));
+            Action<ScreenshotDetectedNotification> detectedHandler = (s) =>
+                tcs.TrySetResult(new SseItem<string>(JsonSerializer.Serialize(s), "screenshot-detected"));
+            Action<ScreenshotStatusChangedNotification> statusHandler = (s) =>
+                tcs.TrySetResult(new SseItem<string>(JsonSerializer.Serialize(s), "screenshot-status"));
 
             OnProgressChange += progressHandler;
             OnScreenshotIndexed += screenshotHandler;
+            OnScreenshotDetected += detectedHandler;
+            OnScreenshotStatusChanged += statusHandler;
 
             SseItem<string>? result = null;
             try
@@ -60,6 +73,8 @@ public class ScanProgressService
             {
                 OnProgressChange -= progressHandler;
                 OnScreenshotIndexed -= screenshotHandler;
+                OnScreenshotDetected -= detectedHandler;
+                OnScreenshotStatusChanged -= statusHandler;
             }
 
             if (result.HasValue) yield return result.Value;
@@ -90,3 +105,5 @@ public record ProgressUpdate(
 );
 
 public record ScreenshotNotification(int Id, string Filename);
+public record ScreenshotDetectedNotification(int Id, string Filename);
+public record ScreenshotStatusChangedNotification(int Id, ScreenshotStatus Status, string? OcrText);

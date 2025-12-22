@@ -14,13 +14,13 @@ public class ApiController : ControllerBase
 {
     private readonly GlimpseDbContext _db;
     private readonly ScanProgressService _progress;
-    private readonly OcrService _ocr;
+    private readonly ScreenshotWatcherService _watcher;
 
-    public ApiController(GlimpseDbContext db, ScanProgressService progress, OcrService ocr)
+    public ApiController(GlimpseDbContext db, ScanProgressService progress, ScreenshotWatcherService watcher)
     {
         _db = db;
         _progress = progress;
-        _ocr = ocr;
+        _watcher = watcher;
     }
 
     /// <summary>
@@ -223,11 +223,16 @@ public class ApiController : ControllerBase
         var screenshot = await _db.Screenshots.FindAsync(id);
         if (screenshot == null) return NotFound();
 
-        var ocrText = await _ocr.ExtractTextAsync(screenshot.Path);
-        screenshot.OcrText = ocrText;
+        // Reset status to Pending and clear OCR text
+        screenshot.Status = ScreenshotStatus.Pending;
+        screenshot.OcrText = null;
         await _db.SaveChangesAsync();
+        _progress.NotifyScreenshotStatusChanged(id, ScreenshotStatus.Pending);
 
-        return Ok(new { ocrText });
+        // Enqueue for processing via the priority queue
+        await _watcher.EnqueueForProcessingAsync(screenshot.Path);
+
+        return Accepted();
     }
 
     [HttpPost("screenshots/{id}/notes")]

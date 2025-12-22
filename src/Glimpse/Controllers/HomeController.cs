@@ -20,10 +20,20 @@ public class HomeController : Controller
         _progress = progress;
     }
 
-    public async Task<IActionResult> Index(string? q, int page = 0)
+    public async Task<IActionResult> Index(string? q, int page = 0, string? partial = null, int? id = null)
     {
+        // Handle single card partial request
+        if (partial == "card" && id.HasValue)
+        {
+            var screenshot = await _db.Screenshots.FindAsync(id.Value);
+            if (screenshot == null) return NotFound();
+
+            ViewBag.SearchQuery = q;
+            return PartialView("_ScreenshotGrid", new List<Screenshot> { screenshot });
+        }
+
         var query = _db.Screenshots.AsQueryable();
-        
+
         if (!string.IsNullOrWhiteSpace(q))
         {
             // Try to parse as date
@@ -41,19 +51,19 @@ public class HomeController : Controller
                     (s.Notes != null && EF.Functions.Like(s.Notes, $"%{q}%")));
             }
         }
-        
+
         var screenshots = await query
             .OrderByDescending(s => s.CreatedAt)
             .ToListAsync();
 
         ViewBag.SearchQuery = q;
         ViewBag.Progress = _progress;
-        
+
         if (Request.Headers.XRequestedWith == "XMLHttpRequest")
         {
             return PartialView("_ScreenshotGrid", screenshots);
         }
-        
+
         return View(screenshots);
     }
 

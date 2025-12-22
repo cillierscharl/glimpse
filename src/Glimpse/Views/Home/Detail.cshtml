@@ -1,7 +1,9 @@
 @model Glimpse.Models.Screenshot
+@using Glimpse.Models
 @{
     ViewData["Title"] = "Screenshot Details";
     var filename = System.IO.Path.GetFileName(Model.Path);
+    var isPending = Model.Status == ScreenshotStatus.Pending || Model.Status == ScreenshotStatus.Processing;
 }
 
 <div class="mb-6">
@@ -57,16 +59,28 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div class="bg-dark-900 rounded-2xl border border-dark-800 p-6">
             <div class="flex items-center justify-between mb-4">
-                <h2 class="text-lg font-semibold text-dark-100">Extracted Text</h2>
+                <div class="flex items-center gap-3">
+                    <h2 class="text-lg font-semibold text-dark-100">Extracted Text</h2>
+                    @if (isPending)
+                    {
+                        <span id="ocr-status" class="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-violet-400 bg-violet-500/10 rounded-full">
+                            <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            @(Model.Status == ScreenshotStatus.Processing ? "Processing..." : "Pending")
+                        </span>
+                    }
+                </div>
                 <div class="flex gap-2">
-                    <button id="reocr-btn" onclick="reOcr(@Model.Id)" 
-                            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-dark-300 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors">
+                    <button id="reocr-btn" onclick="reOcr(@Model.Id)"
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-dark-300 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors @(isPending ? "hidden" : "")">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                         </svg>
                         <span id="reocr-text">Re-OCR</span>
                     </button>
-                    <button onclick="copyTextToClipboard()" 
+                    <button onclick="copyTextToClipboard()"
                             class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-dark-300 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -75,7 +89,8 @@
                     </button>
                 </div>
             </div>
-            <div id="ocr-text" class="text-dark-400 text-sm whitespace-pre-wrap font-mono bg-dark-950 rounded-xl p-4 overflow-x-auto scrollbar-thin">@(string.IsNullOrEmpty(Model.OcrText) ? "No text detected" : Model.OcrText)</div>
+            <div id="ocr-text" class="text-dark-400 text-sm whitespace-pre-wrap font-mono bg-dark-950 rounded-xl p-4 overflow-x-auto scrollbar-thin">@(isPending ? "Waiting for OCR to complete..." : (string.IsNullOrEmpty(Model.OcrText) ? "No text detected" : Model.OcrText))</div>
+            <div id="ocr-length" class="hidden">@(Model.OcrText?.Length ?? 0)</div>
         </div>
 
         <div class="bg-dark-900 rounded-2xl border border-dark-800 p-6">
@@ -164,23 +179,40 @@
     
     async function reOcr(id) {
         const btn = document.getElementById('reocr-btn');
-        const text = document.getElementById('reocr-text');
-        btn.disabled = true;
-        text.textContent = 'Processing...';
+        const ocrTextEl = document.getElementById('ocr-text');
+        const headerEl = ocrTextEl.closest('.bg-dark-900').querySelector('.flex.items-center.gap-3');
+
+        // Hide the button immediately
+        btn.classList.add('hidden');
+
         try {
             const response = await fetch(`/api/screenshots/${id}/reocr`, { method: 'POST' });
-            if (response.ok) {
-                const data = await response.json();
-                document.getElementById('ocr-text').textContent = data.ocrText || 'No text detected';
-                text.textContent = 'Done!';
-                setTimeout(() => { text.textContent = 'Re-OCR'; btn.disabled = false; }, 2000);
+            if (response.ok || response.status === 202) {
+                // Show processing status badge
+                let statusEl = document.getElementById('ocr-status');
+                if (!statusEl) {
+                    statusEl = document.createElement('span');
+                    statusEl.id = 'ocr-status';
+                    statusEl.className = 'inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-violet-400 bg-violet-500/10 rounded-full';
+                    headerEl.appendChild(statusEl);
+                }
+                statusEl.innerHTML = `
+                    <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Pending...
+                `;
+                ocrTextEl.textContent = 'Waiting for OCR...';
+                // SSE will handle the completion via screenshot-status event
             } else {
-                text.textContent = 'Failed';
-                setTimeout(() => { text.textContent = 'Re-OCR'; btn.disabled = false; }, 2000);
+                // Show button again on failure
+                btn.classList.remove('hidden');
+                showToast('Failed to queue Re-OCR', 'error');
             }
         } catch (e) {
-            text.textContent = 'Failed';
-            setTimeout(() => { text.textContent = 'Re-OCR'; btn.disabled = false; }, 2000);
+            btn.classList.remove('hidden');
+            showToast('Failed to queue Re-OCR', 'error');
         }
     }
     
@@ -208,4 +240,44 @@
             setTimeout(() => { text.textContent = 'Save'; btn.disabled = false; }, 2000);
         }
     }
+
+    // Listen for status updates for this screenshot
+    const currentScreenshotId = @Model.Id;
+    onGlimpseEvent('screenshot-status', (e) => {
+        const s = JSON.parse(e.data);
+        if (s.Id !== currentScreenshotId) return;
+
+        const statusEl = document.getElementById('ocr-status');
+        const textEl = document.getElementById('ocr-text');
+        const lengthEl = document.getElementById('ocr-length');
+
+        if (s.Status === 2) { // Completed
+            // Remove status badge
+            statusEl?.remove();
+            // Update OCR text
+            textEl.textContent = s.OcrText || 'No text detected';
+            lengthEl.textContent = s.OcrText?.length || 0;
+            // Show Re-OCR button again
+            const reocrBtn = document.getElementById('reocr-btn');
+            if (reocrBtn) reocrBtn.classList.remove('hidden');
+            showToast('OCR completed!', 'success');
+        } else if (s.Status === 1) { // Processing
+            if (statusEl) {
+                statusEl.innerHTML = `
+                    <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Processing...
+                `;
+            }
+        } else if (s.Status === 3) { // Failed
+            statusEl?.remove();
+            textEl.textContent = 'OCR failed';
+            // Show Re-OCR button again
+            const reocrBtn = document.getElementById('reocr-btn');
+            if (reocrBtn) reocrBtn.classList.remove('hidden');
+            showToast('OCR failed', 'error');
+        }
+    });
 </script>

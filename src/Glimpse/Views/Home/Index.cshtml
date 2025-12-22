@@ -142,7 +142,7 @@ else
 
 <script>
     // Index page: add progress bar updates and grid refresh to shared SSE connection
-    window.glimpseEvents.addEventListener('progress', (e) => {
+    onGlimpseEvent('progress', (e) => {
         const p = JSON.parse(e.data);
 
         // Handle Ollama status
@@ -172,13 +172,40 @@ else
         document.getElementById('progress-file').textContent = p.CurrentFile || '';
     });
 
-    // Refresh grid when new screenshot is indexed
-    window.glimpseEvents.addEventListener('screenshot', (e) => {
-        fetch('/', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+    // Handle new screenshot detected - add card to grid immediately
+    onGlimpseEvent('screenshot-detected', (e) => {
+        const s = JSON.parse(e.data);
+        const grid = document.getElementById('screenshots-grid');
+
+        // If no grid exists (empty state shown), reload to get the grid
+        if (!grid) {
+            location.reload();
+            return;
+        }
+
+        // Fetch and prepend the new card
+        fetch(`/?partial=card&id=${s.Id}`, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
             .then(r => r.text())
             .then(html => {
-                const grid = document.getElementById('screenshots-grid');
-                if (grid) grid.innerHTML = html;
+                if (html.trim()) {
+                    grid.insertAdjacentHTML('afterbegin', html);
+                }
+            });
+    });
+
+    // Handle screenshot status change - update specific card in place
+    onGlimpseEvent('screenshot-status', (e) => {
+        const s = JSON.parse(e.data);
+        const card = document.getElementById(`screenshot-card-${s.Id}`);
+        if (!card) return;
+
+        // Fetch updated card HTML and replace
+        fetch(`/?partial=card&id=${s.Id}`, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(r => r.text())
+            .then(html => {
+                if (html.trim()) {
+                    card.outerHTML = html;
+                }
             });
     });
 </script>

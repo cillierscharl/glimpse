@@ -35,6 +35,15 @@ public class ScreenshotWatcherService : BackgroundService
         _extensions = config.GetSection("Screenshots:Extensions").Get<string[]>() ?? [".png", ".jpg", ".jpeg"];
     }
 
+    /// <summary>
+    /// Enqueue a screenshot for (re)processing via the priority queue
+    /// </summary>
+    public async Task EnqueueForProcessingAsync(string path)
+    {
+        await _priorityQueue.Writer.WriteAsync(path);
+        _logger.LogInformation("Enqueued for reprocessing: {Path}", path);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Wire up Ollama status to progress service
@@ -89,9 +98,18 @@ public class ScreenshotWatcherService : BackgroundService
                     _recentFiles.TryRemove(key, out _);
             }
 
-            // Wait for file to be fully written, then add to priority queue
+            // Wait for file to be fully written
             await Task.Delay(500);
-            _logger.LogInformation("New screenshot detected, adding to priority queue: {Path}", e.FullPath);
+
+            // Insert screenshot record immediately as Pending
+            var screenshot = await InsertPendingScreenshotAsync(e.FullPath);
+            if (screenshot != null)
+            {
+                _logger.LogInformation("New screenshot detected and saved: {Path} (ID: {Id})", e.FullPath, screenshot.Id);
+                _progress.NotifyScreenshotDetected(screenshot.Id, Path.GetFileName(e.FullPath));
+            }
+
+            // Queue for OCR processing
             await _priorityQueue.Writer.WriteAsync(e.FullPath);
         }
         catch (Exception ex)
@@ -100,10 +118,44 @@ public class ScreenshotWatcherService : BackgroundService
         }
     }
 
+    private async Task<Screenshot?> InsertPendingScreenshotAsync(string path)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<GlimpseDbContext>();
+
+        if (await db.Screenshots.AnyAsync(s => s.Path == path))
+            return null;
+
+        var screenshot = new Screenshot
+        {
+            Path = path,
+            Status = ScreenshotStatus.Pending,
+            CreatedAt = File.GetCreationTimeUtc(path)
+        };
+
+        db.Screenshots.Add(screenshot);
+        await db.SaveChangesAsync();
+
+        return screenshot;
+    }
+
     private async Task ProcessQueueAsync(CancellationToken stoppingToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<GlimpseDbContext>();
+
+        // Find any incomplete screenshots (Pending or Processing) that need to be reprocessed
+        // This handles the case where the app crashed mid-processing
+        var incompleteScreenshots = await db.Screenshots
+            .Where(s => s.Status == ScreenshotStatus.Pending || s.Status == ScreenshotStatus.Processing)
+            .OrderByDescending(s => s.CreatedAt)
+            .Select(s => s.Path)
+            .ToListAsync(stoppingToken);
+
+        if (incompleteScreenshots.Count > 0)
+        {
+            _logger.LogInformation("Found {Count} incomplete screenshots to reprocess", incompleteScreenshots.Count);
+        }
 
         var existingPaths = (await db.Screenshots.Select(s => s.Path).ToListAsync(stoppingToken)).ToHashSet();
 
@@ -116,15 +168,42 @@ public class ScreenshotWatcherService : BackgroundService
             .OrderByDescending(f => File.GetCreationTimeUtc(f))
             .ToList();
 
+        var totalToProcess = backlogFiles.Count + incompleteScreenshots.Count;
         _progress.TotalFiles = allFiles.Count;
-        _progress.AlreadyIndexed = existingPaths.Count;
+        _progress.AlreadyIndexed = existingPaths.Count - incompleteScreenshots.Count;
         _progress.ProcessedFiles = 0;
-        _progress.IsScanning = backlogFiles.Count > 0;
+        _progress.IsScanning = totalToProcess > 0;
 
-        _logger.LogInformation("Found {Count} new screenshots to process ({Indexed} already indexed)",
-            backlogFiles.Count, existingPaths.Count);
+        _logger.LogInformation("Found {Count} new screenshots to process, {Incomplete} incomplete ({Indexed} already indexed)",
+            backlogFiles.Count, incompleteScreenshots.Count, existingPaths.Count - incompleteScreenshots.Count);
 
-        // Queue backlog files
+        // Insert all backlog files as Pending immediately so they show in UI
+        foreach (var file in backlogFiles)
+        {
+            var screenshot = new Screenshot
+            {
+                Path = file,
+                Status = ScreenshotStatus.Pending,
+                CreatedAt = File.GetCreationTimeUtc(file)
+            };
+            db.Screenshots.Add(screenshot);
+        }
+        if (backlogFiles.Count > 0)
+        {
+            await db.SaveChangesAsync(stoppingToken);
+            _logger.LogInformation("Inserted {Count} pending screenshots", backlogFiles.Count);
+        }
+
+        // Queue incomplete screenshots first (recovery from crash)
+        foreach (var file in incompleteScreenshots)
+        {
+            if (File.Exists(file))
+            {
+                await _backlogQueue.Writer.WriteAsync(file, stoppingToken);
+            }
+        }
+
+        // Queue new backlog files for OCR processing
         foreach (var file in backlogFiles)
         {
             await _backlogQueue.Writer.WriteAsync(file, stoppingToken);
@@ -180,24 +259,47 @@ public class ScreenshotWatcherService : BackgroundService
 
     private async Task ProcessImageAsync(string path, CancellationToken cancellationToken = default, bool notify = false)
     {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<GlimpseDbContext>();
+
         try
         {
-            _logger.LogInformation("Processing: {Path}", path);
+            // Get the existing screenshot record (should already exist as Pending)
+            var screenshot = await db.Screenshots.FirstOrDefaultAsync(s => s.Path == path, cancellationToken);
+
+            if (screenshot == null)
+            {
+                // Shouldn't happen normally, but handle gracefully
+                screenshot = new Screenshot
+                {
+                    Path = path,
+                    Status = ScreenshotStatus.Processing,
+                    CreatedAt = File.GetCreationTimeUtc(path)
+                };
+                db.Screenshots.Add(screenshot);
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
+            // Skip if already completed
+            if (screenshot.Status == ScreenshotStatus.Completed)
+                return;
+
+            // Update status to Processing
+            screenshot.Status = ScreenshotStatus.Processing;
+            await db.SaveChangesAsync(cancellationToken);
+            _progress.NotifyScreenshotStatusChanged(screenshot.Id, ScreenshotStatus.Processing);
+
+            _logger.LogInformation("Processing OCR: {Path}", path);
+
+            // Perform OCR
             var text = await _ocrService.ExtractTextAsync(path, cancellationToken);
 
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<GlimpseDbContext>();
-
-            if (await db.Screenshots.AnyAsync(s => s.Path == path, cancellationToken)) return;
-
-            var screenshot = new Screenshot
-            {
-                Path = path,
-                OcrText = text,
-                CreatedAt = File.GetCreationTimeUtc(path)
-            };
-            db.Screenshots.Add(screenshot);
+            // Update with OCR result
+            screenshot.OcrText = text;
+            screenshot.Status = ScreenshotStatus.Completed;
             await db.SaveChangesAsync(cancellationToken);
+
+            _progress.NotifyScreenshotStatusChanged(screenshot.Id, ScreenshotStatus.Completed, text);
 
             if (notify)
             {
@@ -208,6 +310,15 @@ public class ScreenshotWatcherService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to process: {Path}", path);
+
+            // Mark as failed
+            var screenshot = await db.Screenshots.FirstOrDefaultAsync(s => s.Path == path, cancellationToken);
+            if (screenshot != null && screenshot.Status != ScreenshotStatus.Completed)
+            {
+                screenshot.Status = ScreenshotStatus.Failed;
+                await db.SaveChangesAsync(cancellationToken);
+                _progress.NotifyScreenshotStatusChanged(screenshot.Id, ScreenshotStatus.Failed);
+            }
         }
     }
 

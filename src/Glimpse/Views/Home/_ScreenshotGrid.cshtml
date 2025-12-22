@@ -1,4 +1,5 @@
 @model List<Glimpse.Models.Screenshot>
+@using Glimpse.Models
 @{
     var query = ViewBag.SearchQuery as string;
 }
@@ -6,30 +7,79 @@
 @foreach (var screenshot in Model)
 {
     var filename = System.IO.Path.GetFileName(screenshot.Path);
-    <a href="/detail/@screenshot.Id@(query != null ? "?q=" + query : "")" class="group bg-dark-900 rounded-2xl border border-dark-800 overflow-hidden hover:border-dark-700 hover:shadow-xl hover:shadow-dark-950/50 transition-all duration-300 block">
+    var isPending = screenshot.Status == ScreenshotStatus.Pending || screenshot.Status == ScreenshotStatus.Processing;
+    var isFailed = screenshot.Status == ScreenshotStatus.Failed;
+
+    <a href="/detail/@screenshot.Id@(query != null ? "?q=" + query : "")"
+       id="screenshot-card-@screenshot.Id"
+       data-status="@((int)screenshot.Status)"
+       class="group bg-dark-900 rounded-2xl border border-dark-800 overflow-hidden hover:border-dark-700 hover:shadow-xl hover:shadow-dark-950/50 transition-all duration-300 block @(isPending ? "opacity-80" : "")">
         <div class="aspect-video relative overflow-hidden">
-            <img src="/screenshots/@filename" 
-                 alt="Screenshot" 
+            <img src="/screenshots/@filename"
+                 alt="Screenshot"
                  loading="lazy"
                  class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
-            <div class="absolute inset-0 bg-gradient-to-t from-dark-950/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-            <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                <div class="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
+
+            @if (screenshot.Status == ScreenshotStatus.Processing)
+            {
+                <div class="absolute inset-0 bg-dark-950/60 flex items-center justify-center">
+                    <div class="flex flex-col items-center gap-2">
+                        <svg class="w-8 h-8 text-violet-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span class="text-xs text-violet-300">Processing...</span>
+                    </div>
                 </div>
-            </div>
+            }
+            else if (screenshot.Status == ScreenshotStatus.Pending)
+            {
+                <div class="absolute top-2 right-2">
+                    <span class="px-2 py-1 text-xs bg-amber-500/20 text-amber-400 rounded-full backdrop-blur-sm">Pending</span>
+                </div>
+            }
+            else if (screenshot.Status == ScreenshotStatus.Failed)
+            {
+                <div class="absolute inset-0 bg-red-950/40 flex items-center justify-center">
+                    <span class="px-3 py-1.5 text-xs bg-red-500/20 text-red-400 rounded-lg backdrop-blur-sm">OCR Failed</span>
+                </div>
+            }
+            else
+            {
+                <div class="absolute inset-0 bg-gradient-to-t from-dark-950/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div class="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                    </div>
+                </div>
+            }
         </div>
         <div class="p-4">
             <p class="text-sm text-dark-400 line-clamp-2 mb-4 min-h-[2.5rem]">
-                @(string.IsNullOrEmpty(screenshot.OcrText) ? "No text detected" : (screenshot.OcrText.Length > 120 ? screenshot.OcrText.Substring(0, 120) + "..." : screenshot.OcrText))
+                @if (screenshot.Status == ScreenshotStatus.Pending)
+                {
+                    <span class="text-dark-500 italic">Waiting for OCR...</span>
+                }
+                else if (screenshot.Status == ScreenshotStatus.Processing)
+                {
+                    <span class="text-violet-400 italic">Extracting text...</span>
+                }
+                else if (screenshot.Status == ScreenshotStatus.Failed)
+                {
+                    <span class="text-red-400 italic">OCR failed</span>
+                }
+                else
+                {
+                    @(string.IsNullOrEmpty(screenshot.OcrText) ? "No text detected" : (screenshot.OcrText.Length > 120 ? screenshot.OcrText.Substring(0, 120) + "..." : screenshot.OcrText))
+                }
             </p>
             <div class="flex items-center justify-between">
                 <time class="text-xs text-dark-600">@screenshot.CreatedAt.ToString("MMM d, yyyy")</time>
                 <span class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-dark-400">
-                    View details →
+                    View details
                 </span>
             </div>
         </div>

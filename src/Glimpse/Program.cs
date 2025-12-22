@@ -25,7 +25,8 @@ builder.Services.AddDbContext<GlimpseDbContext>(options =>
 builder.Services.AddSingleton<OcrService>();
 builder.Services.AddSingleton<ScanProgressService>();
 builder.Services.AddSingleton<GpuStatsService>();
-builder.Services.AddHostedService<ScreenshotWatcherService>();
+builder.Services.AddSingleton<ScreenshotWatcherService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ScreenshotWatcherService>());
 
 var app = builder.Build();
 
