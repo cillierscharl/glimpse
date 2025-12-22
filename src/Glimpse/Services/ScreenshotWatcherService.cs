@@ -105,6 +105,7 @@ public class ScreenshotWatcherService : BackgroundService
             var screenshot = await InsertPendingScreenshotAsync(e.FullPath);
             if (screenshot != null)
             {
+                GlimpseMetrics.ScreenshotsDetected.Inc();
                 _logger.LogInformation("New screenshot detected and saved: {Path} (ID: {Id})", e.FullPath, screenshot.Id);
                 _progress.NotifyScreenshotDetected(screenshot.Id, Path.GetFileName(e.FullPath));
             }
@@ -210,6 +211,9 @@ public class ScreenshotWatcherService : BackgroundService
         }
         _backlogQueue.Writer.Complete();
 
+        // Start metrics updater in background (doesn't block)
+        _ = UpdateMetricsAsync(stoppingToken);
+
         // Process with 2 parallel workers
         await Task.WhenAll(
             ProcessWorkerAsync(stoppingToken),
@@ -291,8 +295,11 @@ public class ScreenshotWatcherService : BackgroundService
 
             _logger.LogInformation("Processing OCR: {Path}", path);
 
-            // Perform OCR
+            // Perform OCR with timing
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var text = await _ocrService.ExtractTextAsync(path, cancellationToken);
+            stopwatch.Stop();
+            GlimpseMetrics.OcrDuration.Observe(stopwatch.Elapsed.TotalSeconds);
 
             // Capture image dimensions
             try
@@ -314,6 +321,8 @@ public class ScreenshotWatcherService : BackgroundService
 
             _progress.NotifyScreenshotStatusChanged(screenshot.Id, ScreenshotStatus.Completed, text);
 
+            GlimpseMetrics.ScreenshotsProcessed.WithLabels("success").Inc();
+
             if (notify)
             {
                 _progress.NotifyScreenshotIndexed(screenshot.Id, Path.GetFileName(path));
@@ -323,6 +332,7 @@ public class ScreenshotWatcherService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to process: {Path}", path);
+            GlimpseMetrics.ScreenshotsProcessed.WithLabels("failed").Inc();
 
             // Mark as failed
             var screenshot = await db.Screenshots.FirstOrDefaultAsync(s => s.Path == path, cancellationToken);
@@ -332,6 +342,30 @@ public class ScreenshotWatcherService : BackgroundService
                 await db.SaveChangesAsync(cancellationToken);
                 _progress.NotifyScreenshotStatusChanged(screenshot.Id, ScreenshotStatus.Failed);
             }
+        }
+    }
+
+    private async Task UpdateMetricsAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<GlimpseDbContext>();
+
+                var total = await db.Screenshots.CountAsync(ct);
+                var pending = await db.Screenshots.CountAsync(s =>
+                    s.Status == ScreenshotStatus.Pending || s.Status == ScreenshotStatus.Processing, ct);
+
+                GlimpseMetrics.ScreenshotsTotal.Set(total);
+                GlimpseMetrics.ScreenshotsPending.Set(pending);
+                GlimpseMetrics.QueueSize.WithLabels("priority").Set(_priorityQueue.Reader.Count);
+                GlimpseMetrics.QueueSize.WithLabels("backlog").Set(_backlogQueue.Reader.CanCount ? _backlogQueue.Reader.Count : 0);
+            }
+            catch { }
+
+            await Task.Delay(TimeSpan.FromSeconds(15), ct);
         }
     }
 

@@ -25,11 +25,12 @@ public static partial class MarkdownHelper
         // Remove headers: # Header
         result = Headers().Replace(result, "");
 
+        // Remove images first (before links, as images start with !)
+        // ![alt](url) -> alt
+        result = Images().Replace(result, "$1");
+
         // Remove links: [text](url) -> text
         result = Links().Replace(result, "$1");
-
-        // Remove images: ![alt](url) -> alt
-        result = Images().Replace(result, "$1");
 
         // Remove inline code: `code`
         result = InlineCode().Replace(result, "$1");

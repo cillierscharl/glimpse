@@ -6,13 +6,60 @@
     var isPending = Model.Status == ScreenshotStatus.Pending || Model.Status == ScreenshotStatus.Processing;
 }
 
-<div class="mb-6">
+<div class="mb-6 flex items-center justify-between">
     <a href="/@(ViewBag.ReturnQuery != null ? "?q=" + ViewBag.ReturnQuery : "")" class="inline-flex items-center gap-2 text-dark-400 hover:text-dark-200 transition-colors">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
         </svg>
         Back to search
     </a>
+
+    <!-- Navigation -->
+    <div class="flex items-center gap-2">
+        @if (ViewBag.PrevId != null)
+        {
+            <a href="/detail/@ViewBag.PrevId@(ViewBag.ReturnQuery != null ? "?q=" + ViewBag.ReturnQuery : "")"
+               id="nav-prev"
+               class="inline-flex items-center gap-2 px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-300 font-medium rounded-xl border border-dark-700 transition-all"
+               title="Previous (older) - Left arrow key">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                </svg>
+                Prev
+            </a>
+        }
+        else
+        {
+            <span class="inline-flex items-center gap-2 px-4 py-2 bg-dark-900 text-dark-600 font-medium rounded-xl border border-dark-800 cursor-not-allowed">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                </svg>
+                Prev
+            </span>
+        }
+
+        @if (ViewBag.NextId != null)
+        {
+            <a href="/detail/@ViewBag.NextId@(ViewBag.ReturnQuery != null ? "?q=" + ViewBag.ReturnQuery : "")"
+               id="nav-next"
+               class="inline-flex items-center gap-2 px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-300 font-medium rounded-xl border border-dark-700 transition-all"
+               title="Next (newer) - Right arrow key">
+                Next
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+            </a>
+        }
+        else
+        {
+            <span class="inline-flex items-center gap-2 px-4 py-2 bg-dark-900 text-dark-600 font-medium rounded-xl border border-dark-800 cursor-not-allowed">
+                Next
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+            </span>
+        }
+    </div>
 </div>
 
 <div class="space-y-8">
@@ -407,4 +454,36 @@
             showToast('Failed to remove tag', 'error');
         }
     }
+
+    // ===== Keyboard Navigation =====
+    // Capture Escape in capture phase so it runs first
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            window.location.href = '/@(ViewBag.ReturnQuery != null ? "?q=" + ViewBag.ReturnQuery : "")';
+        }
+    }, true);
+
+    document.addEventListener('keydown', (e) => {
+        // Skip if user is typing in an input/textarea
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        if (e.key === 'ArrowLeft') {
+            const prev = document.getElementById('nav-prev');
+            if (prev) prev.click();
+        } else if (e.key === 'ArrowRight') {
+            const next = document.getElementById('nav-next');
+            if (next) next.click();
+        } else if (e.key === 'Delete') {
+            const confirmBtn = document.getElementById('confirm-delete-btn');
+            if (!confirmBtn.classList.contains('hidden')) {
+                // Already in confirm state - delete
+                deleteScreenshot(@Model.Id);
+            } else {
+                // Show confirm state
+                showDeleteConfirm();
+            }
+        }
+    });
 </script>

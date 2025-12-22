@@ -1,5 +1,5 @@
-using System.Globalization;
 using Glimpse.Data;
+using Glimpse.Helpers;
 using Glimpse.Models;
 using Glimpse.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -46,7 +46,7 @@ public class ApiController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(q))
         {
-            var dateRange = TryParseDate(q);
+            var dateRange = DateHelper.TryParseDate(q);
             if (dateRange.HasValue)
             {
                 var (start, end) = dateRange.Value;
@@ -87,22 +87,9 @@ public class ApiController : ControllerBase
                 Height = s.Height
             };
 
-            if (includeImages && System.IO.File.Exists(s.Path))
+            if (includeImages)
             {
-                try
-                {
-                    var bytes = await System.IO.File.ReadAllBytesAsync(s.Path);
-                    var ext = Path.GetExtension(s.Path).ToLowerInvariant();
-                    var mimeType = ext switch
-                    {
-                        ".png" => "image/png",
-                        ".jpg" or ".jpeg" => "image/jpeg",
-                        ".webp" => "image/webp",
-                        _ => "application/octet-stream"
-                    };
-                    result.ImageBase64 = $"data:{mimeType};base64,{Convert.ToBase64String(bytes)}";
-                }
-                catch { /* ignore errors reading image */ }
+                result.ImageBase64 = await FileHelper.GetBase64DataUrlAsync(s.Path);
             }
 
             results.Add(result);
@@ -138,64 +125,12 @@ public class ApiController : ControllerBase
             Height = s.Height
         };
 
-        if (includeImage && System.IO.File.Exists(s.Path))
+        if (includeImage)
         {
-            try
-            {
-                var bytes = await System.IO.File.ReadAllBytesAsync(s.Path);
-                var ext = Path.GetExtension(s.Path).ToLowerInvariant();
-                var mimeType = ext switch
-                {
-                    ".png" => "image/png",
-                    ".jpg" or ".jpeg" => "image/jpeg",
-                    ".webp" => "image/webp",
-                    _ => "application/octet-stream"
-                };
-                result.ImageBase64 = $"data:{mimeType};base64,{Convert.ToBase64String(bytes)}";
-            }
-            catch { /* ignore errors reading image */ }
+            result.ImageBase64 = await FileHelper.GetBase64DataUrlAsync(s.Path);
         }
 
         return Ok(result);
-    }
-
-    private static (DateTime start, DateTime end)? TryParseDate(string input)
-    {
-        var now = DateTime.UtcNow;
-        string[] formats = [
-            "MMMM d", "MMMM dd", "MMM d", "MMM dd",
-            "d MMMM", "dd MMMM", "d MMM", "dd MMM",
-            "MMMM d, yyyy", "MMM d, yyyy",
-            "yyyy-MM-dd", "MM/dd/yyyy", "dd/MM/yyyy"
-        ];
-
-        foreach (var format in formats)
-        {
-            if (DateTime.TryParseExact(input, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
-            {
-                if (!format.Contains("yyyy"))
-                {
-                    date = new DateTime(now.Year, date.Month, date.Day);
-                    if (date > now) date = date.AddYears(-1);
-                }
-                return (date.Date, date.Date.AddDays(1));
-            }
-        }
-
-        for (int m = 1; m <= 12; m++)
-        {
-            var monthName = CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(m);
-            var shortMonthName = CultureInfo.InvariantCulture.DateTimeFormat.GetAbbreviatedMonthName(m);
-            if (input.Equals(monthName, StringComparison.OrdinalIgnoreCase) ||
-                input.Equals(shortMonthName, StringComparison.OrdinalIgnoreCase))
-            {
-                var year = now.Month >= m ? now.Year : now.Year - 1;
-                var start = new DateTime(year, m, 1);
-                return (start, start.AddMonths(1));
-            }
-        }
-
-        return null;
     }
 
     [HttpGet("progress")]

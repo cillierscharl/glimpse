@@ -1,6 +1,7 @@
 using Glimpse.Data;
 using Glimpse.Services;
 using Microsoft.EntityFrameworkCore;
+using Prometheus;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -61,6 +62,13 @@ if (Directory.Exists(watchPath))
 }
 
 app.UseRouting();
+
+// Prometheus metrics (skip SSE endpoint)
+app.UseWhen(
+    ctx => !ctx.Request.Path.StartsWithSegments("/api/progress/stream"),
+    appBuilder => appBuilder.UseHttpMetrics()
+);
+app.MapMetrics();
 
 // SSE endpoint for progress and screenshot updates
 app.MapGet("/api/progress/stream", (ScanProgressService progress, CancellationToken ct) =>

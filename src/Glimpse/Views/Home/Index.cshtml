@@ -247,15 +247,7 @@ else
         if (input) {
             input.focus();
             input.setSelectionRange(input.value.length, input.value.length);
-            
-            // Escape key clears search
-            input.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape') {
-                    input.value = '';
-                    input.dispatchEvent(new Event('input'));
-                }
-            });
-            
+
             // Debounced live search
             let debounceTimer;
             input.addEventListener('input', function() {
@@ -269,6 +261,20 @@ else
                     }
                     window.location.href = url.toString();
                 }, 500);
+            });
+
+            // Escape key clears search and reloads (only if there's something to clear)
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    clearTimeout(debounceTimer);
+                    const hasQuery = input.value || new URLSearchParams(window.location.search).has('q');
+                    if (hasQuery) {
+                        window.location.href = '/';
+                    }
+                    // If no query, do nothing (don't blur, don't reload)
+                }
             });
         }
     });

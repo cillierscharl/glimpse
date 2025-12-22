@@ -101,22 +101,19 @@ public class OcrService
         // Stream the response to wait for completion
         using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
-        while (!reader.EndOfStream && !ct.IsCancellationRequested)
+        string? line;
+        while (!ct.IsCancellationRequested && (line = await reader.ReadLineAsync(ct)) != null)
         {
-            var line = await reader.ReadLineAsync(ct);
-            if (line != null)
+            try
             {
-                try
+                var json = JsonSerializer.Deserialize<JsonElement>(line);
+                if (json.TryGetProperty("status", out var status))
                 {
-                    var json = JsonSerializer.Deserialize<JsonElement>(line);
-                    if (json.TryGetProperty("status", out var status))
-                    {
-                        Status = $"Pulling {_model}: {status.GetString()}";
-                        OnStatusChange?.Invoke();
-                    }
+                    Status = $"Pulling {_model}: {status.GetString()}";
+                    OnStatusChange?.Invoke();
                 }
-                catch { }
             }
+            catch { }
         }
     }
 
