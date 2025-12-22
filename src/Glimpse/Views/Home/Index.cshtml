@@ -64,7 +64,7 @@ else if (progress?.IsScanning == true)
                            name="q" 
                            value="@query" 
                            placeholder="Search your screenshots..." 
-                           class="w-full pl-12 pr-12 py-4 bg-dark-900 border border-dark-700 rounded-2xl text-dark-100 placeholder-dark-500 focus:outline-none focus:border-violet-500/50 focus:ring-2 focus:ring-violet-500/20 transition-all"
+                           class="w-full pl-12 pr-12 py-4 bg-dark-900 border border-dark-700 rounded-2xl text-dark-100 placeholder-dark-500 focus:outline-none focus:bg-dark-900 focus:border-violet-500/50 focus:ring-2 focus:ring-violet-500/20 transition-colors"
                            id="search-input">
                     @if (!string.IsNullOrEmpty(query))
                     {
@@ -82,6 +82,36 @@ else if (progress?.IsScanning == true)
         </div>
     </form>
 </div>
+
+<!-- Tag Filters -->
+@{
+    var allTags = ViewBag.AllTags as List<Glimpse.Models.Tag>;
+    var currentTag = ViewBag.CurrentTag as string;
+}
+@if (allTags?.Count > 0)
+{
+    <div class="mb-6 flex flex-wrap items-center gap-2">
+        <span class="text-sm text-dark-500 mr-2">Tags:</span>
+        @foreach (var tag in allTags)
+        {
+            var isActive = tag.Name == currentTag;
+            var tagUrl = $"/?tag={tag.Name}" + (query != null ? $"&q={query}" : "");
+            <a href="@tagUrl"
+               class="px-3 py-1.5 text-sm rounded-lg transition-colors @(isActive ? "bg-violet-500 text-white" : "bg-dark-800 text-dark-400 hover:bg-dark-700")">
+                @tag.Name
+            </a>
+        }
+        @if (currentTag != null)
+        {
+            var clearUrl = "/" + (query != null ? $"?q={query}" : "");
+            <a href="@clearUrl"
+               class="px-3 py-1.5 text-sm text-dark-500 hover:text-dark-300 transition-colors">
+                Clear filter
+            </a>
+        }
+    </div>
+}
+
 <!-- Stats for nerds -->
 <div class="mt-12 mb-12 border-t border-dark-800 pt-6">
     <button onclick="toggleStats()" class="flex items-center gap-2 text-sm text-dark-500 hover:text-dark-400 transition-colors">

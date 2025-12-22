@@ -89,50 +89,92 @@
                     </button>
                 </div>
             </div>
-            <div id="ocr-text" class="text-dark-400 text-sm whitespace-pre-wrap font-mono bg-dark-950 rounded-xl p-4 overflow-x-auto scrollbar-thin">@(isPending ? "Waiting for OCR to complete..." : (string.IsNullOrEmpty(Model.OcrText) ? "No text detected" : Model.OcrText))</div>
+            <div id="ocr-text" class="text-dark-400 text-sm whitespace-pre-wrap font-mono bg-dark-950 rounded-xl p-4 max-h-96 overflow-y-auto overflow-x-auto scrollbar-thin">@(isPending ? "Waiting for OCR to complete..." : (string.IsNullOrEmpty(Model.OcrText) ? "No text detected" : Model.OcrText))</div>
             <div id="ocr-length" class="hidden">@(Model.OcrText?.Length ?? 0)</div>
         </div>
 
-        <div class="bg-dark-900 rounded-2xl border border-dark-800 p-6">
-            <h2 class="text-lg font-semibold text-dark-100 mb-4">Details</h2>
-            <dl class="space-y-3 text-sm">
-                <div class="flex justify-between">
-                    <dt class="text-dark-500">Filename</dt>
-                    <dd class="text-dark-300">@filename</dd>
-                </div>
-                @if (ViewBag.ImageWidth > 0)
-                {
+        <!-- Right Column: Details + Notes stacked -->
+        <div class="space-y-8">
+            <div class="bg-dark-900 rounded-2xl border border-dark-800 p-6">
+                <h2 class="text-lg font-semibold text-dark-100 mb-4">Details</h2>
+                <dl class="space-y-3 text-sm">
                     <div class="flex justify-between">
-                        <dt class="text-dark-500">Resolution</dt>
-                        <dd class="text-dark-300">@ViewBag.ImageWidth × @ViewBag.ImageHeight</dd>
+                        <dt class="text-dark-500">Filename</dt>
+                        <dd class="text-dark-300">@filename</dd>
                     </div>
-                }
-                <div class="flex justify-between">
-                    <dt class="text-dark-500">Created</dt>
-                    <dd class="text-dark-300">@Model.CreatedAt.ToString("MMMM d, yyyy h:mm tt")</dd>
-                </div>
-                <div class="flex justify-between">
-                    <dt class="text-dark-500">Text Length</dt>
-                    <dd class="text-dark-300">@(Model.OcrText?.Length ?? 0) characters</dd>
-                </div>
-            </dl>
-        </div>
-        
-        <!-- Notes Section -->
-        <div class="bg-dark-900 rounded-2xl border border-dark-800 p-6">
-            <div class="flex items-center justify-between mb-4">
-                <h2 class="text-lg font-semibold text-dark-100">Notes</h2>
-                <button id="save-notes-btn" onclick="saveNotes(@Model.Id)" 
-                        class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-dark-300 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span id="save-notes-text">Save</span>
-                </button>
+                    @if (ViewBag.ImageWidth > 0)
+                    {
+                        <div class="flex justify-between">
+                            <dt class="text-dark-500">Resolution</dt>
+                            <dd class="text-dark-300">@ViewBag.ImageWidth × @ViewBag.ImageHeight</dd>
+                        </div>
+                    }
+                    <div class="flex justify-between">
+                        <dt class="text-dark-500">Created</dt>
+                        <dd class="text-dark-300">@Model.CreatedAt.ToString("MMMM d, yyyy h:mm tt")</dd>
+                    </div>
+                    <div class="flex justify-between">
+                        <dt class="text-dark-500">Text Length</dt>
+                        <dd class="text-dark-300">@(Model.OcrText?.Length ?? 0) characters</dd>
+                    </div>
+                </dl>
             </div>
-            <textarea id="notes-input" 
-                      class="w-full h-24 bg-dark-950 border border-dark-700 rounded-xl p-3 text-dark-300 text-sm resize-none focus:outline-none focus:border-dark-600"
-                      placeholder="Add notes about this screenshot...">@Model.Notes</textarea>
+
+            <!-- Notes Section -->
+            <div class="bg-dark-900 rounded-2xl border border-dark-800 p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-semibold text-dark-100">Notes</h2>
+                    <button id="save-notes-btn" onclick="saveNotes(@Model.Id)"
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-dark-300 bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span id="save-notes-text">Save</span>
+                    </button>
+                </div>
+                <textarea id="notes-input"
+                          class="w-full h-24 bg-dark-950 border border-dark-700 rounded-xl p-3 text-dark-300 text-sm resize-none focus:outline-none focus:border-dark-600"
+                          placeholder="Add notes about this screenshot...">@Model.Notes</textarea>
+            </div>
+
+            <!-- Tags Section -->
+            <div class="bg-dark-900 rounded-2xl border border-dark-800 p-6">
+                <h2 class="text-lg font-semibold text-dark-100 mb-4">Tags</h2>
+
+                <!-- Current Tags -->
+                <div id="current-tags" class="flex flex-wrap gap-2 mb-4">
+                    @if (Model.Tags?.Any() == true)
+                    {
+                        @foreach (var tag in Model.Tags)
+                        {
+                            <span class="tag-pill inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-violet-400 bg-violet-500/10 rounded-lg" data-tag-id="@tag.Id">
+                                @tag.Name
+                                <button onclick="removeTag(@Model.Id, @tag.Id, this)" class="hover:text-violet-200 transition-colors">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </span>
+                        }
+                    }
+                    <span id="no-tags-message" class="text-sm text-dark-500 @(Model.Tags?.Any() == true ? "hidden" : "")">No tags</span>
+                </div>
+
+                <!-- Add Tag Input -->
+                <div class="flex gap-2">
+                    <input type="text"
+                           id="new-tag-input"
+                           list="tag-suggestions"
+                           placeholder="Add tag..."
+                           class="flex-1 px-3 py-2 bg-dark-950 border border-dark-700 rounded-lg text-dark-300 text-sm focus:outline-none focus:border-dark-600"
+                           onkeypress="if(event.key === 'Enter') addTag(@Model.Id)">
+                    <datalist id="tag-suggestions"></datalist>
+                    <button onclick="addTag(@Model.Id)"
+                            class="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-300 text-sm font-medium rounded-lg transition-colors">
+                        Add
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -280,4 +322,89 @@
             showToast('OCR failed', 'error');
         }
     });
+
+    // ===== Tag Management =====
+
+    // Load tag suggestions on page load
+    async function loadTagSuggestions() {
+        try {
+            const response = await fetch('/api/tags');
+            if (response.ok) {
+                const tags = await response.json();
+                const datalist = document.getElementById('tag-suggestions');
+                datalist.innerHTML = tags.map(t => `<option value="${t.name}">`).join('');
+            }
+        } catch (e) { console.error('Failed to load tags:', e); }
+    }
+    loadTagSuggestions();
+
+    async function addTag(screenshotId) {
+        const input = document.getElementById('new-tag-input');
+        const name = input.value.trim();
+        if (!name) return;
+
+        try {
+            const response = await fetch(`/api/screenshots/${screenshotId}/tags`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+
+            if (response.ok) {
+                const tag = await response.json();
+
+                // Hide "no tags" message
+                document.getElementById('no-tags-message').classList.add('hidden');
+
+                // Check if tag already displayed
+                if (!document.querySelector(`[data-tag-id="${tag.id}"]`)) {
+                    const container = document.getElementById('current-tags');
+                    const pill = document.createElement('span');
+                    pill.className = 'tag-pill inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-violet-400 bg-violet-500/10 rounded-lg';
+                    pill.dataset.tagId = tag.id;
+                    pill.innerHTML = `
+                        ${tag.name}
+                        <button onclick="removeTag(${screenshotId}, ${tag.id}, this)" class="hover:text-violet-200 transition-colors">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    `;
+                    container.insertBefore(pill, document.getElementById('no-tags-message'));
+                }
+
+                input.value = '';
+                loadTagSuggestions();
+                showToast('Tag added!', 'success');
+            } else {
+                showToast('Failed to add tag', 'error');
+            }
+        } catch (e) {
+            showToast('Failed to add tag', 'error');
+        }
+    }
+
+    async function removeTag(screenshotId, tagId, button) {
+        try {
+            const response = await fetch(`/api/screenshots/${screenshotId}/tags/${tagId}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                const pill = button.closest('.tag-pill');
+                pill.remove();
+
+                // Show "no tags" if none left
+                const remaining = document.querySelectorAll('#current-tags .tag-pill');
+                if (remaining.length === 0) {
+                    document.getElementById('no-tags-message').classList.remove('hidden');
+                }
+                showToast('Tag removed', 'success');
+            } else {
+                showToast('Failed to remove tag', 'error');
+            }
+        } catch (e) {
+            showToast('Failed to remove tag', 'error');
+        }
+    }
 </script>

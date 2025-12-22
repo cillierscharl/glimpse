@@ -16,9 +16,17 @@ public class ScreenshotResult
     public string? OcrText { get; set; }
     public string? Notes { get; set; }
     public DateTime CreatedAt { get; set; }
-    public int? Width { get; set; }
-    public int? Height { get; set; }
+    public int Width { get; set; }
+    public int Height { get; set; }
     public string? ImageBase64 { get; set; }
 }
 
 public record NotesRequest(string? Notes);
+
+public class TagDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+}
+
+public record AddTagRequest(string Name);

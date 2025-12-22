@@ -27,12 +27,14 @@ public class ApiController : ControllerBase
     /// Search screenshots by text content or date
     /// </summary>
     /// <param name="q">Search query (text to find in OCR/notes, or date like "Nov 26", "2024-11-26")</param>
+    /// <param name="tag">Filter by tag name</param>
     /// <param name="includeImages">Include base64-encoded images in response (default: false)</param>
     /// <param name="limit">Maximum number of results (default: 24, max: 100)</param>
     /// <param name="offset">Number of results to skip for pagination (default: 0)</param>
     [HttpGet("screenshots/search")]
     public async Task<ActionResult<SearchResponse>> Search(
         [FromQuery] string? q = null,
+        [FromQuery] string? tag = null,
         [FromQuery] bool includeImages = false,
         [FromQuery] int limit = 24,
         [FromQuery] int offset = 0)
@@ -40,7 +42,7 @@ public class ApiController : ControllerBase
         limit = Math.Clamp(limit, 1, 100);
         offset = Math.Max(0, offset);
 
-        var query = _db.Screenshots.AsQueryable();
+        var query = _db.Screenshots.Include(s => s.Tags).AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(q))
         {
@@ -56,6 +58,12 @@ public class ApiController : ControllerBase
                     (s.OcrText != null && EF.Functions.Like(s.OcrText, $"%{q}%")) ||
                     (s.Notes != null && EF.Functions.Like(s.Notes, $"%{q}%")));
             }
+        }
+
+        // Tag filter
+        if (!string.IsNullOrWhiteSpace(tag))
+        {
+            query = query.Where(s => s.Tags.Any(t => t.Name == tag.ToLowerInvariant()));
         }
 
         var totalCount = await query.CountAsync();
@@ -74,31 +82,25 @@ public class ApiController : ControllerBase
                 Filename = Path.GetFileName(s.Path),
                 OcrText = s.OcrText,
                 Notes = s.Notes,
-                CreatedAt = s.CreatedAt
+                CreatedAt = s.CreatedAt,
+                Width = s.Width,
+                Height = s.Height
             };
 
-            if (System.IO.File.Exists(s.Path))
+            if (includeImages && System.IO.File.Exists(s.Path))
             {
                 try
                 {
-                    using var stream = System.IO.File.OpenRead(s.Path);
-                    using var image = await SixLabors.ImageSharp.Image.LoadAsync(stream);
-                    result.Width = image.Width;
-                    result.Height = image.Height;
-
-                    if (includeImages)
+                    var bytes = await System.IO.File.ReadAllBytesAsync(s.Path);
+                    var ext = Path.GetExtension(s.Path).ToLowerInvariant();
+                    var mimeType = ext switch
                     {
-                        var bytes = await System.IO.File.ReadAllBytesAsync(s.Path);
-                        var ext = Path.GetExtension(s.Path).ToLowerInvariant();
-                        var mimeType = ext switch
-                        {
-                            ".png" => "image/png",
-                            ".jpg" or ".jpeg" => "image/jpeg",
-                            ".webp" => "image/webp",
-                            _ => "application/octet-stream"
-                        };
-                        result.ImageBase64 = $"data:{mimeType};base64,{Convert.ToBase64String(bytes)}";
-                    }
+                        ".png" => "image/png",
+                        ".jpg" or ".jpeg" => "image/jpeg",
+                        ".webp" => "image/webp",
+                        _ => "application/octet-stream"
+                    };
+                    result.ImageBase64 = $"data:{mimeType};base64,{Convert.ToBase64String(bytes)}";
                 }
                 catch { /* ignore errors reading image */ }
             }
@@ -131,31 +133,25 @@ public class ApiController : ControllerBase
             Filename = Path.GetFileName(s.Path),
             OcrText = s.OcrText,
             Notes = s.Notes,
-            CreatedAt = s.CreatedAt
+            CreatedAt = s.CreatedAt,
+            Width = s.Width,
+            Height = s.Height
         };
 
-        if (System.IO.File.Exists(s.Path))
+        if (includeImage && System.IO.File.Exists(s.Path))
         {
             try
             {
-                using var stream = System.IO.File.OpenRead(s.Path);
-                using var image = await SixLabors.ImageSharp.Image.LoadAsync(stream);
-                result.Width = image.Width;
-                result.Height = image.Height;
-
-                if (includeImage)
+                var bytes = await System.IO.File.ReadAllBytesAsync(s.Path);
+                var ext = Path.GetExtension(s.Path).ToLowerInvariant();
+                var mimeType = ext switch
                 {
-                    var bytes = await System.IO.File.ReadAllBytesAsync(s.Path);
-                    var ext = Path.GetExtension(s.Path).ToLowerInvariant();
-                    var mimeType = ext switch
-                    {
-                        ".png" => "image/png",
-                        ".jpg" or ".jpeg" => "image/jpeg",
-                        ".webp" => "image/webp",
-                        _ => "application/octet-stream"
-                    };
-                    result.ImageBase64 = $"data:{mimeType};base64,{Convert.ToBase64String(bytes)}";
-                }
+                    ".png" => "image/png",
+                    ".jpg" or ".jpeg" => "image/jpeg",
+                    ".webp" => "image/webp",
+                    _ => "application/octet-stream"
+                };
+                result.ImageBase64 = $"data:{mimeType};base64,{Convert.ToBase64String(bytes)}";
             }
             catch { /* ignore errors reading image */ }
         }
@@ -270,5 +266,91 @@ public class ApiController : ControllerBase
         await _db.SaveChangesAsync();
 
         return Ok(new { nextId = nextScreenshot?.Id });
+    }
+
+    // ===== Tag Endpoints =====
+
+    /// <summary>
+    /// Get all tags
+    /// </summary>
+    [HttpGet("tags")]
+    public async Task<ActionResult<List<TagDto>>> GetTags()
+    {
+        var tags = await _db.Tags
+            .OrderBy(t => t.Name)
+            .Select(t => new TagDto { Id = t.Id, Name = t.Name })
+            .ToListAsync();
+        return Ok(tags);
+    }
+
+    /// <summary>
+    /// Get tags for a specific screenshot
+    /// </summary>
+    [HttpGet("screenshots/{id}/tags")]
+    public async Task<ActionResult<List<TagDto>>> GetScreenshotTags(int id)
+    {
+        var screenshot = await _db.Screenshots
+            .Include(s => s.Tags)
+            .FirstOrDefaultAsync(s => s.Id == id);
+        if (screenshot == null) return NotFound();
+
+        var tags = screenshot.Tags
+            .Select(t => new TagDto { Id = t.Id, Name = t.Name })
+            .OrderBy(t => t.Name)
+            .ToList();
+        return Ok(tags);
+    }
+
+    /// <summary>
+    /// Add a tag to a screenshot (creates tag if it doesn't exist)
+    /// </summary>
+    [HttpPost("screenshots/{id}/tags")]
+    public async Task<ActionResult<TagDto>> AddTagToScreenshot(int id, [FromBody] AddTagRequest request)
+    {
+        var screenshot = await _db.Screenshots
+            .Include(s => s.Tags)
+            .FirstOrDefaultAsync(s => s.Id == id);
+        if (screenshot == null) return NotFound();
+
+        var tagName = request.Name.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(tagName)) return BadRequest("Tag name required");
+
+        // Find or create tag
+        var tag = await _db.Tags.FirstOrDefaultAsync(t => t.Name == tagName);
+        if (tag == null)
+        {
+            tag = new Tag { Name = tagName };
+            _db.Tags.Add(tag);
+        }
+
+        // Add if not already tagged
+        if (!screenshot.Tags.Any(t => t.Id == tag.Id))
+        {
+            screenshot.Tags.Add(tag);
+            await _db.SaveChangesAsync();
+        }
+
+        return Ok(new TagDto { Id = tag.Id, Name = tag.Name });
+    }
+
+    /// <summary>
+    /// Remove a tag from a screenshot
+    /// </summary>
+    [HttpDelete("screenshots/{id}/tags/{tagId}")]
+    public async Task<IActionResult> RemoveTagFromScreenshot(int id, int tagId)
+    {
+        var screenshot = await _db.Screenshots
+            .Include(s => s.Tags)
+            .FirstOrDefaultAsync(s => s.Id == id);
+        if (screenshot == null) return NotFound();
+
+        var tag = screenshot.Tags.FirstOrDefault(t => t.Id == tagId);
+        if (tag != null)
+        {
+            screenshot.Tags.Remove(tag);
+            await _db.SaveChangesAsync();
+        }
+
+        return NoContent();
     }
 }

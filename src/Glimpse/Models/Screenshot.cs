@@ -16,4 +16,9 @@ public class Screenshot
     public string? Notes { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public ScreenshotStatus Status { get; set; } = ScreenshotStatus.Pending;
+    public int Width { get; set; }
+    public int Height { get; set; }
+
+    // Navigation property for many-to-many with Tags
+    public ICollection<Tag> Tags { get; set; } = [];
 }

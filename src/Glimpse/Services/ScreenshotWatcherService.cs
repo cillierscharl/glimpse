@@ -294,6 +294,19 @@ public class ScreenshotWatcherService : BackgroundService
             // Perform OCR
             var text = await _ocrService.ExtractTextAsync(path, cancellationToken);
 
+            // Capture image dimensions
+            try
+            {
+                using var stream = File.OpenRead(path);
+                using var image = await SixLabors.ImageSharp.Image.LoadAsync(stream, cancellationToken);
+                screenshot.Width = image.Width;
+                screenshot.Height = image.Height;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to read image dimensions: {Path}", path);
+            }
+
             // Update with OCR result
             screenshot.OcrText = text;
             screenshot.Status = ScreenshotStatus.Completed;

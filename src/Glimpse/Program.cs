@@ -51,7 +51,12 @@ if (Directory.Exists(watchPath))
     app.UseStaticFiles(new StaticFileOptions
     {
         FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(watchPath),
-        RequestPath = "/screenshots"
+        RequestPath = "/screenshots",
+        OnPrepareResponse = ctx =>
+        {
+            // Screenshots are immutable - cache for 1 year
+            ctx.Context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+        }
     });
 }
 

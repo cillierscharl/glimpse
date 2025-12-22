@@ -1,5 +1,6 @@
 @model List<Glimpse.Models.Screenshot>
 @using Glimpse.Models
+@using Glimpse.Helpers
 @{
     var query = ViewBag.SearchQuery as string;
 }
@@ -73,7 +74,8 @@
                 }
                 else
                 {
-                    @(string.IsNullOrEmpty(screenshot.OcrText) ? "No text detected" : (screenshot.OcrText.Length > 120 ? screenshot.OcrText.Substring(0, 120) + "..." : screenshot.OcrText))
+                    var plainText = MarkdownHelper.StripMarkdown(screenshot.OcrText);
+                    @(string.IsNullOrEmpty(plainText) ? "No text detected" : (plainText.Length > 120 ? plainText.Substring(0, 120) + "..." : plainText))
                 }
             </p>
             <div class="flex items-center justify-between">
@@ -82,6 +84,19 @@
                     View details
                 </span>
             </div>
+            @if (screenshot.Tags?.Any() == true)
+            {
+                <div class="flex flex-wrap gap-1 mt-2">
+                    @foreach (var tag in screenshot.Tags.Take(3))
+                    {
+                        <span class="px-2 py-0.5 text-xs text-violet-400 bg-violet-500/10 rounded">@tag.Name</span>
+                    }
+                    @if (screenshot.Tags.Count > 3)
+                    {
+                        <span class="px-2 py-0.5 text-xs text-dark-500">+@(screenshot.Tags.Count - 3)</span>
+                    }
+                </div>
+            }
         </div>
     </a>
 }

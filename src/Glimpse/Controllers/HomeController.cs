@@ -20,19 +20,21 @@ public class HomeController : Controller
         _progress = progress;
     }
 
-    public async Task<IActionResult> Index(string? q, int page = 0, string? partial = null, int? id = null)
+    public async Task<IActionResult> Index(string? q, string? tag, int page = 0, string? partial = null, int? id = null)
     {
         // Handle single card partial request
         if (partial == "card" && id.HasValue)
         {
-            var screenshot = await _db.Screenshots.FindAsync(id.Value);
+            var screenshot = await _db.Screenshots
+                .Include(s => s.Tags)
+                .FirstOrDefaultAsync(s => s.Id == id.Value);
             if (screenshot == null) return NotFound();
 
             ViewBag.SearchQuery = q;
             return PartialView("_ScreenshotGrid", new List<Screenshot> { screenshot });
         }
 
-        var query = _db.Screenshots.AsQueryable();
+        var query = _db.Screenshots.Include(s => s.Tags).AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(q))
         {
@@ -52,11 +54,19 @@ public class HomeController : Controller
             }
         }
 
+        // Tag filter
+        if (!string.IsNullOrWhiteSpace(tag))
+        {
+            query = query.Where(s => s.Tags.Any(t => t.Name == tag.ToLowerInvariant()));
+        }
+
         var screenshots = await query
             .OrderByDescending(s => s.CreatedAt)
             .ToListAsync();
 
         ViewBag.SearchQuery = q;
+        ViewBag.CurrentTag = tag;
+        ViewBag.AllTags = await _db.Tags.OrderBy(t => t.Name).ToListAsync();
         ViewBag.Progress = _progress;
 
         if (Request.Headers.XRequestedWith == "XMLHttpRequest")
@@ -69,26 +79,17 @@ public class HomeController : Controller
 
     public async Task<IActionResult> Detail(int id, string? q)
     {
-        var screenshot = await _db.Screenshots.FindAsync(id);
+        var screenshot = await _db.Screenshots
+            .Include(s => s.Tags)
+            .FirstOrDefaultAsync(s => s.Id == id);
         if (screenshot == null) return NotFound();
-        
+
         ViewBag.ReturnQuery = q;
-        
-        // Get image dimensions
-        var filename = Path.GetFileName(screenshot.Path);
-        var imagePath = Path.Combine("/screenshots", filename);
-        ViewBag.ImageWidth = 0;
-        ViewBag.ImageHeight = 0;
-        
-        try
-        {
-            using var stream = System.IO.File.OpenRead(screenshot.Path);
-            using var image = await SixLabors.ImageSharp.Image.LoadAsync(stream);
-            ViewBag.ImageWidth = image.Width;
-            ViewBag.ImageHeight = image.Height;
-        }
-        catch { /* ignore if can't read dimensions */ }
-        
+
+        // Use stored dimensions
+        ViewBag.ImageWidth = screenshot.Width;
+        ViewBag.ImageHeight = screenshot.Height;
+
         return View(screenshot);
     }
 

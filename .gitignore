@@ -57,3 +57,6 @@ data/
 *.db
 *.db-shm
 *.db-wal
+
+# Claude Code
+CLAUDE.md
