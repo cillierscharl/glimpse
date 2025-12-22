@@ -39,6 +39,7 @@ services:
 
   loki:
     image: grafana/loki:latest
+    profiles: [monitoring]
     ports:
       - "3100:3100"
     volumes:
@@ -48,6 +49,7 @@ services:
 
   promtail:
     image: grafana/promtail:latest
+    profiles: [monitoring]
     volumes:
       - ./promtail.yml:/etc/promtail/config.yml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -58,6 +60,7 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
+    profiles: [monitoring]
     ports:
       - "9090:9090"
     volumes:
@@ -71,6 +74,7 @@ services:
 
   grafana:
     image: grafana/grafana:latest
+    profiles: [monitoring]
     ports:
       - "3000:3000"
     volumes:
