@@ -10,6 +10,7 @@
     <meta name="xsrf-token" content="@tokens.RequestToken">
     <title>@ViewData["Title"] - Glimpse</title>
     <link rel="stylesheet" href="~/css/app.css">
+    @await RenderSectionAsync("Head", required: false)
     <script>
         // SSE connection with auto-reconnect
         if ('Notification' in window && Notification.permission === 'default') {

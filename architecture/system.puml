@@ -1,0 +1,45 @@
+@startuml Glimpse Architecture
+skinparam monochrome true
+skinparam linetype ortho
+skinparam componentStyle rectangle
+skinparam defaultFontName monospace
+skinparam shadowing false
+
+title Glimpse - Screenshot OCR Search
+
+package "Docker Compose" as docker {
+
+    component "Glimpse\n.NET 10 / ASP.NET Core" as glimpse {
+        component "Web UI\nRazor + Tailwind" as ui
+        component "REST API\nSwagger" as api
+        component "Screenshot Watcher\nFileSystemWatcher" as watcher
+        component "OCR Service" as ocr
+        database "SQLite\nFull-text search" as db
+    }
+
+    component "Ollama\nminicpm-v vision model" as ollama
+
+    package "Monitoring (optional)" as monitoring {
+        component "Prometheus" as prom
+        component "Grafana" as grafana
+        component "Loki" as loki
+    }
+}
+
+folder "Screenshots\n~/Pictures/Screenshots" as screenshots
+actor "User" as user
+
+user --> ui : Browse & Search
+ui --> api : AJAX + SSE
+watcher <-- screenshots : FileSystemWatcher
+watcher --> ocr : Queue
+ocr --> ollama : Base64 image
+ollama --> ocr : Extracted text
+ocr --> db : Store result
+api --> db : Query
+
+glimpse ..> prom : /metrics
+prom ..> grafana
+glimpse ..> loki : logs
+
+@enduml

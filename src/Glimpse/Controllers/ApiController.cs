@@ -289,6 +289,14 @@ public class ApiController : ControllerBase
         {
             screenshot.Tags.Remove(tag);
             await _db.SaveChangesAsync();
+
+            // Clean up orphaned tag
+            var stillUsed = await _db.Screenshots.AnyAsync(s => s.Tags.Any(t => t.Id == tagId));
+            if (!stillUsed)
+            {
+                _db.Tags.Remove(tag);
+                await _db.SaveChangesAsync();
+            }
         }
 
         return NoContent();

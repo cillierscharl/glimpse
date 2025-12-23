@@ -60,6 +60,3 @@ data/
 
 # Claude Code
 CLAUDE.md
-
-# Node (for Tailwind CSS builds)
-node_modules/

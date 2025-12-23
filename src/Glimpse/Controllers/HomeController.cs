@@ -100,28 +100,36 @@ public class HomeController : Controller
             .FirstOrDefaultAsync(s => s.Id == id);
         if (screenshot == null) return NotFound();
         ViewBag.ReturnQuery = q;
-        // Use stored dimensions
         ViewBag.ImageWidth = screenshot.Width;
         ViewBag.ImageHeight = screenshot.Height;
-        // Find previous (older) and next (newer) screenshots
-        // Use Id as tiebreaker when CreatedAt is equal (e.g., copied files)
-        var prev = await _db.Screenshots
-            .Where(s => s.CreatedAt < screenshot.CreatedAt ||
-                       (s.CreatedAt == screenshot.CreatedAt && s.Id < screenshot.Id))
-            .OrderByDescending(s => s.CreatedAt)
-            .ThenByDescending(s => s.Id)
-            .Select(s => s.Id)
-            .FirstOrDefaultAsync();
 
-        var next = await _db.Screenshots
-            .Where(s => s.CreatedAt > screenshot.CreatedAt ||
-                       (s.CreatedAt == screenshot.CreatedAt && s.Id > screenshot.Id))
-            .OrderBy(s => s.CreatedAt)
-            .ThenBy(s => s.Id)
-            .Select(s => s.Id)
-            .FirstOrDefaultAsync();
-        ViewBag.PrevId = prev > 0 ? (int?)prev : null;
-        ViewBag.NextId = next > 0 ? (int?)next : null;
+        // Find previous and next screenshots in a single query
+        var neighbours = await _db.Database
+            .SqlQuery<NeighbourResult>($"""
+                SELECT * FROM (
+                    SELECT 'prev' as Direction, Id, Path FROM Screenshots
+                    WHERE CreatedAt < {screenshot.CreatedAt} OR (CreatedAt = {screenshot.CreatedAt} AND Id < {screenshot.Id})
+                    ORDER BY CreatedAt DESC, Id DESC LIMIT 1
+                )
+                UNION ALL
+                SELECT * FROM (
+                    SELECT 'next' as Direction, Id, Path FROM Screenshots
+                    WHERE CreatedAt > {screenshot.CreatedAt} OR (CreatedAt = {screenshot.CreatedAt} AND Id > {screenshot.Id})
+                    ORDER BY CreatedAt ASC, Id ASC LIMIT 1
+                )
+                """)
+            .ToListAsync();
+
+        var prev = neighbours.FirstOrDefault(n => n.Direction == "prev");
+        var next = neighbours.FirstOrDefault(n => n.Direction == "next");
+
+        ViewBag.PrevId = prev?.Id;
+        ViewBag.NextId = next?.Id;
+        ViewBag.PrevFilename = prev != null ? Path.GetFileName(prev.Path) : null;
+        ViewBag.NextFilename = next != null ? Path.GetFileName(next.Path) : null;
+
         return View(screenshot);
     }
+
+    private record NeighbourResult(string Direction, int Id, string Path);
 }

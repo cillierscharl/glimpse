@@ -1,0 +1,54 @@
+@startuml Screenshot Processing Flow
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName monospace
+
+title Screenshot Processing Pipeline
+
+|File System|
+start
+:New screenshot saved;
+
+|Watcher Service|
+:FileSystemWatcher detects file;
+:Debounce (2 sec);
+
+if (New file?) then (yes)
+  :Add to Priority Queue;
+else (existing)
+  :Add to Backlog Queue;
+endif
+
+|OCR Worker|
+:Dequeue screenshot;
+:Set status = Processing;
+:Read image as Base64;
+
+|Ollama|
+:Send to minicpm-v model;
+note right
+  Prompt: "Extract all visible
+  text from this screenshot"
+end note
+:Vision model processes;
+:Return extracted text;
+
+|OCR Worker|
+if (Success?) then (yes)
+  :Set status = Completed;
+  :Store OCR text;
+else (no)
+  :Set status = Failed;
+  :Log error;
+endif
+
+|SSE Broadcast|
+:Emit screenshot-status event;
+:Emit screenshot-indexed event;
+
+|Web UI|
+:Receive SSE event;
+:Update UI in real-time;
+stop
+
+@enduml
