@@ -250,7 +250,7 @@
     
     async function deleteScreenshot(id) {
         try {
-            const response = await fetch(`/api/screenshots/${id}`, { method: 'DELETE' });
+            const response = await apiFetch(`/api/screenshots/${id}`, { method: 'DELETE' });
             if (response.ok) {
                 const data = await response.json();
                 if (data.nextId) {
@@ -275,7 +275,7 @@
         btn.classList.add('hidden');
 
         try {
-            const response = await fetch(`/api/screenshots/${id}/reocr`, { method: 'POST' });
+            const response = await apiFetch(`/api/screenshots/${id}/reocr`, { method: 'POST' });
             if (response.ok || response.status === 202) {
                 // Show processing status badge
                 let statusEl = document.getElementById('ocr-status');
@@ -312,7 +312,7 @@
         btn.disabled = true;
         text.textContent = 'Saving...';
         try {
-            const response = await fetch(`/api/screenshots/${id}/notes`, {
+            const response = await apiFetch(`/api/screenshots/${id}/notes`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ notes })
@@ -379,7 +379,11 @@
             if (response.ok) {
                 const tags = await response.json();
                 const datalist = document.getElementById('tag-suggestions');
-                datalist.innerHTML = tags.map(t => `<option value="${t.name}">`).join('');
+                datalist.replaceChildren(...tags.map(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.name;
+                    return opt;
+                }));
             }
         } catch (e) { console.error('Failed to load tags:', e); }
     }
@@ -391,7 +395,7 @@
         if (!name) return;
 
         try {
-            const response = await fetch(`/api/screenshots/${screenshotId}/tags`, {
+            const response = await apiFetch(`/api/screenshots/${screenshotId}/tags`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name })
@@ -409,14 +413,20 @@
                     const pill = document.createElement('span');
                     pill.className = 'tag-pill inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-violet-400 bg-violet-500/10 rounded-lg';
                     pill.dataset.tagId = tag.id;
-                    pill.innerHTML = `
-                        ${tag.name}
-                        <button onclick="removeTag(${screenshotId}, ${tag.id}, this)" class="hover:text-violet-200 transition-colors">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                        </button>
-                    `;
+
+                    // Use textContent for tag name to prevent XSS
+                    const nameSpan = document.createElement('span');
+                    nameSpan.textContent = tag.name;
+                    pill.appendChild(nameSpan);
+
+                    const removeBtn = document.createElement('button');
+                    removeBtn.className = 'hover:text-violet-200 transition-colors';
+                    removeBtn.onclick = () => removeTag(screenshotId, tag.id, removeBtn);
+                    removeBtn.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>`;
+                    pill.appendChild(removeBtn);
+
                     container.insertBefore(pill, document.getElementById('no-tags-message'));
                 }
 
@@ -433,7 +443,7 @@
 
     async function removeTag(screenshotId, tagId, button) {
         try {
-            const response = await fetch(`/api/screenshots/${screenshotId}/tags/${tagId}`, {
+            const response = await apiFetch(`/api/screenshots/${screenshotId}/tags/${tagId}`, {
                 method: 'DELETE'
             });
 

@@ -11,6 +11,7 @@ services:
     environment:
       - ASPNETCORE_URLS=http://+:5123
       - Ollama__BaseUrl=http://ollama:11434
+      - Metrics__Enabled=${METRICS_ENABLED:-false}
     depends_on:
       - ollama
     restart: unless-stopped

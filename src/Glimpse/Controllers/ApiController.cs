@@ -149,6 +149,7 @@ public class ApiController : ControllerBase
     }
 
     [HttpPost("screenshots/{id}/reocr")]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> ReOcr(int id)
     {
         var screenshot = await _db.Screenshots.FindAsync(id);
@@ -167,6 +168,7 @@ public class ApiController : ControllerBase
     }
 
     [HttpPost("screenshots/{id}/notes")]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> UpdateNotes(int id, [FromBody] NotesRequest request)
     {
         var screenshot = await _db.Screenshots.FindAsync(id);
@@ -179,6 +181,7 @@ public class ApiController : ControllerBase
     }
 
     [HttpDelete("screenshots/{id}")]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> DeleteScreenshot(int id)
     {
         var screenshot = await _db.Screenshots.FindAsync(id);
@@ -240,6 +243,7 @@ public class ApiController : ControllerBase
     /// Add a tag to a screenshot (creates tag if it doesn't exist)
     /// </summary>
     [HttpPost("screenshots/{id}/tags")]
+    [ValidateAntiForgeryToken]
     public async Task<ActionResult<TagDto>> AddTagToScreenshot(int id, [FromBody] AddTagRequest request)
     {
         var screenshot = await _db.Screenshots
@@ -272,6 +276,7 @@ public class ApiController : ControllerBase
     /// Remove a tag from a screenshot
     /// </summary>
     [HttpDelete("screenshots/{id}/tags/{tagId}")]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> RemoveTagFromScreenshot(int id, int tagId)
     {
         var screenshot = await _db.Screenshots

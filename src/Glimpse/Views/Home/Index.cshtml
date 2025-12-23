@@ -134,7 +134,14 @@ else if (progress?.IsScanning == true)
     </div>
 </div>
 
-@if (Model.Count == 0)
+@{
+    var hasMore = ViewBag.HasMore ?? false;
+    var currentPage = ViewBag.CurrentPage ?? 0;
+    var totalCount = ViewBag.TotalCount ?? 0;
+    var initialIds = string.Join(",", Model.Select(s => s.Id));
+}
+
+@if (Model.Count == 0 && currentPage == 0)
 {
     <div class="flex flex-col items-center justify-center py-20 text-center">
         <div class="w-20 h-20 rounded-3xl bg-dark-800 flex items-center justify-center mb-6">
@@ -165,10 +172,141 @@ else if (progress?.IsScanning == true)
 }
 else
 {
-    <div id="screenshots-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+    <div class="mb-4 text-sm text-dark-500">
+        Showing <span id="shown-count">@Model.Count</span> of <span id="total-count">@totalCount</span> screenshots
+    </div>
+    <div id="screenshots-grid"
+         class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+         data-page="@currentPage"
+         data-has-more="@hasMore.ToString().ToLower()"
+         data-query="@query"
+         data-tag="@currentTag"
+         data-rendered-ids="@initialIds">
         @await Html.PartialAsync("_ScreenshotGrid", Model)
     </div>
+
+    @if (hasMore)
+    {
+        <div id="load-more-container" class="mt-8 flex justify-center">
+            <button id="load-more-btn"
+                    onclick="loadMore()"
+                    class="px-6 py-3 bg-dark-800 hover:bg-dark-700 text-dark-300 rounded-xl border border-dark-700 transition-colors">
+                Load more
+            </button>
+            <div id="load-more-spinner" style="display: none;" class="flex items-center gap-2 text-dark-500">
+                <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>Loading...</span>
+            </div>
+        </div>
+    }
 }
+
+<script>
+    // Track rendered screenshot IDs to prevent duplicates
+    const renderedIds = new Set();
+
+    // Initialize from server-rendered data
+    (function() {
+        const grid = document.getElementById('screenshots-grid');
+        if (grid && grid.dataset.renderedIds) {
+            grid.dataset.renderedIds.split(',').forEach(id => {
+                if (id) renderedIds.add(parseInt(id));
+            });
+        }
+    })();
+
+    // Check if screenshot is already rendered
+    function isRendered(id) {
+        return renderedIds.has(parseInt(id));
+    }
+
+    // Mark screenshot as rendered
+    function markRendered(id) {
+        renderedIds.add(parseInt(id));
+    }
+
+    // Load more screenshots
+    async function loadMore() {
+        const grid = document.getElementById('screenshots-grid');
+        const btn = document.getElementById('load-more-btn');
+        const spinner = document.getElementById('load-more-spinner');
+        const container = document.getElementById('load-more-container');
+
+        if (!grid) return;
+
+        const currentPage = parseInt(grid.dataset.page) || 0;
+        const nextPage = currentPage + 1;
+        const query = grid.dataset.query || '';
+        const tag = grid.dataset.tag || '';
+
+        // Build URL with exclude parameter to skip already-rendered IDs
+        const excludeIds = Array.from(renderedIds).join(',');
+        let url = `/?page=${nextPage}`;
+        if (query) url += `&q=${encodeURIComponent(query)}`;
+        if (tag) url += `&tag=${encodeURIComponent(tag)}`;
+        if (excludeIds) url += `&exclude=${excludeIds}`;
+
+        // Show loading state
+        btn.style.display = 'none';
+        spinner.style.display = 'flex';
+
+        try {
+            const response = await fetch(url, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            const html = await response.text();
+            const hasMore = response.headers.get('X-Has-More') === 'true';
+
+            if (html.trim()) {
+                // Parse new cards and track their IDs
+                const temp = document.createElement('div');
+                temp.innerHTML = html;
+                temp.querySelectorAll('[id^="screenshot-card-"]').forEach(card => {
+                    const id = parseInt(card.id.replace('screenshot-card-', ''));
+                    if (!isRendered(id)) {
+                        markRendered(id);
+                        grid.appendChild(card);
+                    }
+                });
+
+                // Update shown count
+                document.getElementById('shown-count').textContent = renderedIds.size;
+            }
+
+            grid.dataset.page = nextPage;
+            grid.dataset.hasMore = hasMore;
+
+            if (hasMore) {
+                btn.style.display = 'block';
+                spinner.style.display = 'none';
+            } else {
+                container.remove();
+            }
+        } catch (err) {
+            console.error('Failed to load more:', err);
+            btn.style.display = 'block';
+            spinner.style.display = 'none';
+        }
+    }
+
+    // Infinite scroll - load more when near bottom
+    let loadingMore = false;
+    window.addEventListener('scroll', () => {
+        const grid = document.getElementById('screenshots-grid');
+        const container = document.getElementById('load-more-container');
+        if (!grid || !container || loadingMore) return;
+        if (grid.dataset.hasMore !== 'true') return;
+
+        const rect = container.getBoundingClientRect();
+        if (rect.top < window.innerHeight + 500) {
+            loadingMore = true;
+            loadMore().finally(() => { loadingMore = false; });
+        }
+    });
+</script>
 
 <script>
     // Index page: add progress bar updates and grid refresh to shared SSE connection
@@ -213,12 +351,24 @@ else
             return;
         }
 
+        // Skip if already rendered (prevents duplicates from SSE + pagination race)
+        if (isRendered(s.Id)) return;
+
         // Fetch and prepend the new card
         fetch(`/?partial=card&id=${s.Id}`, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
             .then(r => r.text())
             .then(html => {
                 if (html.trim()) {
-                    grid.insertAdjacentHTML('afterbegin', html);
+                    // Double-check before inserting (race condition guard)
+                    if (!isRendered(s.Id)) {
+                        markRendered(s.Id);
+                        grid.insertAdjacentHTML('afterbegin', html);
+                        // Update counts
+                        const shownEl = document.getElementById('shown-count');
+                        const totalEl = document.getElementById('total-count');
+                        if (shownEl) shownEl.textContent = renderedIds.size;
+                        if (totalEl) totalEl.textContent = parseInt(totalEl.textContent) + 1;
+                    }
                 }
             });
     });

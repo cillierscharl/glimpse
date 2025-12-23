@@ -4,9 +4,29 @@ using Microsoft.EntityFrameworkCore;
 using Prometheus;
 
 var builder = WebApplication.CreateBuilder(args);
+var metricsEnabled = builder.Configuration.GetValue<bool>("Metrics:Enabled");
 
 // Add MVC
 builder.Services.AddControllersWithViews();
+
+// Anti-forgery for CSRF protection
+builder.Services.AddAntiforgery(options =>
+{
+    options.HeaderName = "X-XSRF-TOKEN";
+});
+
+// CORS - restrict to same origin only
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.SetIsOriginAllowed(origin =>
+            new Uri(origin).Host == "localhost" || new Uri(origin).Host == "127.0.0.1")
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+    });
+});
 
 // Add Swagger
 builder.Services.AddEndpointsApiExplorer();
@@ -62,13 +82,18 @@ if (Directory.Exists(watchPath))
 }
 
 app.UseRouting();
+app.UseCors();
+app.UseAntiforgery();
 
-// Prometheus metrics (skip SSE endpoint)
-app.UseWhen(
-    ctx => !ctx.Request.Path.StartsWithSegments("/api/progress/stream"),
-    appBuilder => appBuilder.UseHttpMetrics()
-);
-app.MapMetrics();
+// Prometheus metrics (optional - enabled via Metrics:Enabled config)
+if (metricsEnabled)
+{
+    app.UseWhen(
+        ctx => !ctx.Request.Path.StartsWithSegments("/api/progress/stream"),
+        appBuilder => appBuilder.UseHttpMetrics()
+    );
+    app.MapMetrics();
+}
 
 // SSE endpoint for progress and screenshot updates
 app.MapGet("/api/progress/stream", (ScanProgressService progress, CancellationToken ct) =>

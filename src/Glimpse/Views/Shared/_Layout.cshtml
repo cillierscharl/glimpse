@@ -1,42 +1,15 @@
+@inject Microsoft.AspNetCore.Antiforgery.IAntiforgery Antiforgery
+@{
+    var tokens = Antiforgery.GetAndStoreTokens(Context);
+}
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="xsrf-token" content="@tokens.RequestToken">
     <title>@ViewData["Title"] - Glimpse</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        dark: {
-                            50: '#f7f7f8',
-                            100: '#ececf1',
-                            200: '#d9d9e3',
-                            300: '#c5c5d2',
-                            400: '#acacbe',
-                            500: '#8e8ea0',
-                            600: '#565869',
-                            700: '#40414f',
-                            800: '#343541',
-                            900: '#202123',
-                            950: '#0d0d0f',
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-    <style type="text/tailwindcss">
-        @@layer utilities {
-            .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
-            .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
-            .scrollbar-thin::-webkit-scrollbar-thumb { background: #565869; border-radius: 3px; }
-            .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #8e8ea0; }
-        }
-    </style>
+    <link rel="stylesheet" href="~/css/app.css">
     <script>
         // SSE connection with auto-reconnect
         if ('Notification' in window && Notification.permission === 'default') {
@@ -125,6 +98,23 @@
                 };
             }
         });
+    </script>
+
+    <script>
+        // XSRF-protected fetch wrapper for state-changing requests
+        window.apiFetch = function(url, options = {}) {
+            const method = (options.method || 'GET').toUpperCase();
+            if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+                const token = document.querySelector('meta[name="xsrf-token"]')?.content;
+                if (token) {
+                    options.headers = {
+                        ...options.headers,
+                        'X-XSRF-TOKEN': token
+                    };
+                }
+            }
+            return fetch(url, options);
+        };
     </script>
 
     <script>
