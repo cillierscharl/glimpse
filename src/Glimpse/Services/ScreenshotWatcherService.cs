@@ -3,6 +3,8 @@ using System.Threading.Channels;
 using Glimpse.Data;
 using Glimpse.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Primitives;
 
 namespace Glimpse.Services;
 
@@ -17,7 +19,8 @@ public class ScreenshotWatcherService : BackgroundService
     private readonly ConcurrentDictionary<string, DateTime> _recentFiles = new();
     private readonly Channel<string> _priorityQueue = Channel.CreateUnbounded<string>();
     private readonly Channel<string> _backlogQueue = Channel.CreateUnbounded<string>();
-    private FileSystemWatcher? _watcher;
+    private PhysicalFileProvider? _fileProvider;
+    private CancellationTokenSource? _watcherCts;
 
     public ScreenshotWatcherService(
         IServiceScopeFactory scopeFactory,
@@ -63,32 +66,79 @@ public class ScreenshotWatcherService : BackgroundService
             _logger.LogInformation("Created watch directory: {Path}", _watchPath);
         }
 
-        // Start watching for new files immediately
-        _watcher = new FileSystemWatcher(_watchPath)
-        {
-            NotifyFilter = NotifyFilters.FileName | NotifyFilters.CreationTime,
-            EnableRaisingEvents = true
-        };
+        // Start watching for new files using PhysicalFileProvider (supports polling via DOTNET_USE_POLLING_FILE_WATCHER)
+        _fileProvider = new PhysicalFileProvider(_watchPath);
+        _watcherCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
-        _watcher.Created += OnFileCreated;
+        // Start the file watcher loop in the background
+        _ = WatchForNewFilesAsync(_watcherCts.Token);
 
-        _logger.LogInformation("Watching for screenshots in: {Path}", _watchPath);
+        _logger.LogInformation("Watching for screenshots in: {Path} (polling: {Polling})",
+            _watchPath,
+            Environment.GetEnvironmentVariable("DOTNET_USE_POLLING_FILE_WATCHER") == "true" ? "enabled" : "disabled");
 
         // Process images from queue
         await ProcessQueueAsync(stoppingToken);
     }
 
-    private async void OnFileCreated(object sender, FileSystemEventArgs e)
+    private async Task WatchForNewFilesAsync(CancellationToken ct)
+    {
+        var knownFiles = new HashSet<string>(
+            Directory.EnumerateFiles(_watchPath).Where(IsValidExtension));
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                // Watch for any file changes in the directory
+                var changeToken = _fileProvider!.Watch("*.*");
+                var tcs = new TaskCompletionSource<bool>();
+                using var registration = changeToken.RegisterChangeCallback(_ => tcs.TrySetResult(true), null);
+
+                // Wait for change or cancellation
+                using var ctRegistration = ct.Register(() => tcs.TrySetCanceled());
+                await tcs.Task;
+
+                if (ct.IsCancellationRequested) break;
+
+                // Small delay to let file writes complete
+                await Task.Delay(500, ct);
+
+                // Check for new files
+                var currentFiles = Directory.EnumerateFiles(_watchPath)
+                    .Where(IsValidExtension)
+                    .ToHashSet();
+
+                var newFiles = currentFiles.Except(knownFiles).ToList();
+
+                foreach (var filePath in newFiles)
+                {
+                    await OnNewFileDetectedAsync(filePath);
+                }
+
+                knownFiles = currentFiles;
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in file watcher loop");
+                await Task.Delay(1000, ct);
+            }
+        }
+    }
+
+    private async Task OnNewFileDetectedAsync(string filePath)
     {
         try
         {
-            if (!IsValidExtension(e.FullPath)) return;
-
             // Debounce: ignore if we've seen this file recently
             var now = DateTime.UtcNow;
-            if (_recentFiles.TryGetValue(e.FullPath, out var lastSeen) && (now - lastSeen).TotalSeconds < 2)
+            if (_recentFiles.TryGetValue(filePath, out var lastSeen) && (now - lastSeen).TotalSeconds < 2)
                 return;
-            _recentFiles[e.FullPath] = now;
+            _recentFiles[filePath] = now;
 
             // Clean up old entries (older than 1 minute)
             var cutoff = now.AddMinutes(-1);
@@ -98,24 +148,21 @@ public class ScreenshotWatcherService : BackgroundService
                     _recentFiles.TryRemove(key, out _);
             }
 
-            // Wait for file to be fully written
-            await Task.Delay(500);
-
             // Insert screenshot record immediately as Pending
-            var screenshot = await InsertPendingScreenshotAsync(e.FullPath);
+            var screenshot = await InsertPendingScreenshotAsync(filePath);
             if (screenshot != null)
             {
                 GlimpseMetrics.ScreenshotsDetected.Inc();
-                _logger.LogInformation("New screenshot detected and saved: {Path} (ID: {Id})", e.FullPath, screenshot.Id);
-                _progress.NotifyScreenshotDetected(screenshot.Id, Path.GetFileName(e.FullPath));
+                _logger.LogInformation("New screenshot detected and saved: {Path} (ID: {Id})", filePath, screenshot.Id);
+                _progress.NotifyScreenshotDetected(screenshot.Id, Path.GetFileName(filePath));
             }
 
             // Queue for OCR processing
-            await _priorityQueue.Writer.WriteAsync(e.FullPath);
+            await _priorityQueue.Writer.WriteAsync(filePath);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error handling new file: {Path}", e.FullPath);
+            _logger.LogError(ex, "Error handling new file: {Path}", filePath);
         }
     }
 
@@ -374,7 +421,9 @@ public class ScreenshotWatcherService : BackgroundService
 
     public override void Dispose()
     {
-        _watcher?.Dispose();
+        _watcherCts?.Cancel();
+        _watcherCts?.Dispose();
+        _fileProvider?.Dispose();
         base.Dispose();
     }
 }
