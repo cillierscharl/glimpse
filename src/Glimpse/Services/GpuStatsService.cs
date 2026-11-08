@@ -1,53 +1,40 @@
 using System.Diagnostics;
-using Polly;
-using Polly.Retry;
 
 namespace Glimpse.Services;
 
-public class GpuStatsService
+public class GpuStatsService(ILogger<GpuStatsService> logger)
 {
-    private readonly ILogger<GpuStatsService> _logger;
-    private readonly ResiliencePipeline<GpuStats?> _retryPipeline;
+    private const int MaxAttempts = 3;
+    private static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(5);
 
-    public GpuStatsService(ILogger<GpuStatsService> logger)
+    public async Task<GpuStats?> GetStatsAsync(CancellationToken ct = default)
     {
-        _logger = logger;
-        _retryPipeline = new ResiliencePipelineBuilder<GpuStats?>()
-            .AddRetry(new RetryStrategyOptions<GpuStats?>
+        for (var attempt = 1; ; attempt++)
+        {
+            try
             {
-                MaxRetryAttempts = 2,
-                Delay = TimeSpan.FromMilliseconds(100),
-                BackoffType = DelayBackoffType.Exponential,
-                ShouldHandle = new PredicateBuilder<GpuStats?>()
-                    .Handle<NvmlException>(),
-                OnRetry = args =>
-                {
-                    logger.LogDebug("Retrying nvidia-smi (attempt {Attempt})", args.AttemptNumber + 1);
-                    return ValueTask.CompletedTask;
-                }
-            })
-            .Build();
-    }
-
-    public async Task<GpuStats?> GetStatsAsync()
-    {
-        try
-        {
-            return await _retryPipeline.ExecuteAsync(async _ => await QueryNvidiaSmiAsync());
-        }
-        catch (NvmlException ex)
-        {
-            _logger.LogWarning("nvidia-smi failed after retries: {Error}", ex.Message);
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to get GPU stats");
-            return null;
+                return await QueryNvidiaSmiAsync(ct);
+            }
+            catch (NvmlException ex) when (attempt < MaxAttempts)
+            {
+                // nvidia-smi intermittently fails with transient NVML errors; a quick retry usually succeeds.
+                logger.LogDebug("nvidia-smi failed (attempt {Attempt}): {Error}", attempt, ex.Message);
+                await Task.Delay(TimeSpan.FromMilliseconds(100 * attempt), ct);
+            }
+            catch (NvmlException ex)
+            {
+                logger.LogWarning("nvidia-smi failed after {Attempts} attempts: {Error}", MaxAttempts, ex.Message);
+                return null;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogWarning(ex, "Failed to get GPU stats");
+                return null;
+            }
         }
     }
 
-    private async Task<GpuStats?> QueryNvidiaSmiAsync()
+    private async Task<GpuStats?> QueryNvidiaSmiAsync(CancellationToken ct)
     {
         var psi = new ProcessStartInfo
         {
@@ -61,13 +48,28 @@ public class GpuStatsService
         using var process = Process.Start(psi);
         if (process == null)
         {
-            _logger.LogWarning("Failed to start nvidia-smi process");
+            logger.LogWarning("Failed to start nvidia-smi process");
             return null;
         }
 
-        var output = await process.StandardOutput.ReadToEndAsync();
-        var error = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(QueryTimeout);
+
+        // Read both streams concurrently so neither pipe can fill up and block the process.
+        var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
+        var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException($"nvidia-smi did not respond within {QueryTimeout.TotalSeconds}s");
+        }
+
+        var output = await stdout;
+        var error = await stderr;
 
         if (process.ExitCode != 0)
         {
@@ -77,7 +79,7 @@ public class GpuStatsService
         var parts = output.Trim().Split(',').Select(p => p.Trim()).ToArray();
         if (parts.Length < 7)
         {
-            _logger.LogWarning("nvidia-smi returned unexpected output ({PartCount} parts): {Output}", parts.Length, output.Trim());
+            logger.LogWarning("nvidia-smi returned unexpected output ({PartCount} parts): {Output}", parts.Length, output.Trim());
             return null;
         }
 
@@ -93,10 +95,7 @@ public class GpuStatsService
     }
 }
 
-public class NvmlException : Exception
-{
-    public NvmlException(string message) : base(message) { }
-}
+public class NvmlException(string message) : Exception(message);
 
 public record GpuStats(
     string Name,

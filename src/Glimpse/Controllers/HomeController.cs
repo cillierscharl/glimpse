@@ -1,110 +1,75 @@
 using Glimpse.Data;
-using Glimpse.Helpers;
 using Glimpse.Models;
 using Glimpse.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+
 namespace Glimpse.Controllers;
-public class HomeController : Controller
+
+public class HomeController(GlimpseDbContext db, ScanProgressService progress) : Controller
 {
-    private readonly GlimpseDbContext _db;
-    private readonly ScanProgressService _progress;
     private const int PageSize = 24;
-    public HomeController(GlimpseDbContext db, ScanProgressService progress)
+
+    /// <summary>
+    /// Search page. XHR requests with <paramref name="before"/> return the next page of cards as a partial,
+    /// with the cursor for the page after that in the X-Next-Cursor header (absent when there are no more).
+    /// </summary>
+    public async Task<IActionResult> Index(string? q, string? tag, string? before = null)
     {
-        _db = db;
-        _progress = progress;
-    }
-    public async Task<IActionResult> Index(string? q, string? tag, int page = 0, string? partial = null, int? id = null, string? exclude = null)
-    {
-        // Handle single card partial request
-        if (partial == "card" && id.HasValue)
+        var query = db.Screenshots.Include(s => s.Tags).Search(q, tag);
+        var isPartial = Request.Headers.XRequestedWith == "XMLHttpRequest";
+
+        var page = query;
+        if (PageCursor.TryParse(before, out var cursor))
         {
-            var screenshot = await _db.Screenshots
-                .Include(s => s.Tags)
-                .FirstOrDefaultAsync(s => s.Id == id.Value);
-            if (screenshot == null) return NotFound();
-            ViewBag.SearchQuery = q;
-            return PartialView("_ScreenshotGrid", new List<Screenshot> { screenshot });
+            page = page.After(cursor);
         }
 
-        var query = _db.Screenshots.Include(s => s.Tags).AsQueryable();
-
-        if (!string.IsNullOrWhiteSpace(q))
-        {
-            // Try to parse as date
-            var dateRange = DateHelper.TryParseDate(q);
-            if (dateRange.HasValue)
-            {
-                var (start, end) = dateRange.Value;
-                query = query.Where(s => s.CreatedAt >= start && s.CreatedAt < end);
-            }
-            else
-            {
-                // Text search
-                query = query.Where(s =>
-                    (s.OcrText != null && EF.Functions.Like(s.OcrText, $"%{q}%")) ||
-                    (s.Notes != null && EF.Functions.Like(s.Notes, $"%{q}%")));
-            }
-        }
-
-        // Tag filter
-        if (!string.IsNullOrWhiteSpace(tag))
-        {
-            query = query.Where(s => s.Tags.Any(t => t.Name == tag.ToLowerInvariant()));
-        }
-
-        // Exclude already-rendered IDs (for deduplication during pagination)
-        if (!string.IsNullOrWhiteSpace(exclude))
-        {
-            var excludeIds = exclude.Split(',')
-                .Select(x => int.TryParse(x, out var i) ? i : 0)
-                .Where(x => x > 0)
-                .ToHashSet();
-            if (excludeIds.Count > 0)
-            {
-                query = query.Where(s => !excludeIds.Contains(s.Id));
-            }
-        }
-
-        var totalCount = await query.CountAsync();
-
-        var screenshots = await query
-            .OrderByDescending(s => s.CreatedAt)
-            .ThenByDescending(s => s.Id)
-            .Skip(page * PageSize)
-            .Take(PageSize)
-            .ToListAsync();
+        // Fetch one extra row to find out whether there's another page without a second COUNT query.
+        var screenshots = await page.NewestFirst().Take(PageSize + 1).ToListAsync();
+        var hasMore = screenshots.Count > PageSize;
+        if (hasMore) screenshots.RemoveAt(PageSize);
+        var nextCursor = hasMore ? PageCursor.From(screenshots[^1]).ToString() : null;
 
         ViewBag.SearchQuery = q;
-        ViewBag.CurrentTag = tag;
-        ViewBag.CurrentPage = page;
-        ViewBag.HasMore = (page + 1) * PageSize < totalCount;
-        ViewBag.TotalCount = totalCount;
-        ViewBag.AllTags = await _db.Tags.OrderBy(t => t.Name).ToListAsync();
-        ViewBag.Progress = _progress;
 
-        if (Request.Headers.XRequestedWith == "XMLHttpRequest")
+        if (isPartial)
         {
-            Response.Headers["X-Has-More"] = ViewBag.HasMore.ToString().ToLower();
-            Response.Headers["X-Total-Count"] = totalCount.ToString();
+            if (nextCursor != null) Response.Headers["X-Next-Cursor"] = nextCursor;
             return PartialView("_ScreenshotGrid", screenshots);
         }
 
+        ViewBag.CurrentTag = tag;
+        ViewBag.NextCursor = nextCursor;
+        ViewBag.TotalCount = await query.CountAsync();
+        ViewBag.AllTags = await db.Tags.OrderBy(t => t.Name).ToListAsync();
+        ViewBag.Progress = progress;
+
         return View(screenshots);
     }
+
+    /// <summary>A single screenshot card, used to insert or refresh cards live from SSE events.</summary>
+    public async Task<IActionResult> Card(int id, string? q)
+    {
+        var screenshot = await db.Screenshots
+            .Include(s => s.Tags)
+            .FirstOrDefaultAsync(s => s.Id == id);
+        if (screenshot == null) return NotFound();
+
+        ViewBag.SearchQuery = q;
+        return PartialView("_ScreenshotGrid", new List<Screenshot> { screenshot });
+    }
+
     public async Task<IActionResult> Detail(int id, string? q)
     {
-        var screenshot = await _db.Screenshots
+        var screenshot = await db.Screenshots
             .Include(s => s.Tags)
             .FirstOrDefaultAsync(s => s.Id == id);
         if (screenshot == null) return NotFound();
         ViewBag.ReturnQuery = q;
-        ViewBag.ImageWidth = screenshot.Width;
-        ViewBag.ImageHeight = screenshot.Height;
 
         // Find previous and next screenshots in a single query
-        var neighbours = await _db.Database
+        var neighbours = await db.Database
             .SqlQuery<NeighbourResult>($"""
                 SELECT * FROM (
                     SELECT 'prev' as Direction, Id, Path FROM Screenshots
@@ -125,8 +90,8 @@ public class HomeController : Controller
 
         ViewBag.PrevId = prev?.Id;
         ViewBag.NextId = next?.Id;
-        ViewBag.PrevFilename = prev != null ? Path.GetFileName(prev.Path) : null;
-        ViewBag.NextFilename = next != null ? Path.GetFileName(next.Path) : null;
+        ViewBag.PrevPath = prev?.Path;
+        ViewBag.NextPath = next?.Path;
 
         return View(screenshot);
     }

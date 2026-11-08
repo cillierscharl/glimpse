@@ -1,19 +1,21 @@
 using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Threading.Channels;
 using Glimpse.Models;
 
 namespace Glimpse.Services;
 
 public class ScanProgressService
 {
+    private int _processedFiles;
+
     public int TotalFiles { get; set; }
     public int AlreadyIndexed { get; set; }
-    public int _processedFiles;
     public int ProcessedFiles
     {
-        get => _processedFiles;
-        set => _processedFiles = value;
+        get => Volatile.Read(ref _processedFiles);
+        set => Volatile.Write(ref _processedFiles, value);
     }
     public volatile bool IsScanning;
     public string? CurrentFile { get; set; }
@@ -28,6 +30,9 @@ public class ScanProgressService
     public event Action<ScreenshotDetectedNotification>? OnScreenshotDetected;
     public event Action<ScreenshotStatusChangedNotification>? OnScreenshotStatusChanged;
 
+    /// <summary>Called by OCR workers, which run concurrently.</summary>
+    public void IncrementProcessed() => Interlocked.Increment(ref _processedFiles);
+
     public void NotifyChange() => OnProgressChange?.Invoke();
     public void NotifyScreenshotIndexed(int id, string filename) =>
         OnScreenshotIndexed?.Invoke(new ScreenshotNotification(id, filename));
@@ -39,49 +44,59 @@ public class ScanProgressService
     public async IAsyncEnumerable<SseItem<string>> GetUpdatesAsync(
         [EnumeratorCancellation] CancellationToken ct)
     {
-        // Send initial progress state
-        yield return new SseItem<string>(JsonSerializer.Serialize(GetCurrentUpdate()), "progress");
-
-        while (!ct.IsCancellationRequested)
+        // Each connection gets its own queue, subscribed for the whole connection. Events often fire in
+        // bursts (e.g. status -> Completed immediately followed by "indexed"), and anything raised while
+        // the previous event is still being written must be queued rather than dropped. The queue is
+        // bounded so a stalled client can't grow memory without limit.
+        var channel = Channel.CreateBounded<SseItem<string>>(new BoundedChannelOptions(256)
         {
-            var tcs = new TaskCompletionSource<SseItem<string>>();
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true
+        });
 
-            Action progressHandler = () =>
-                tcs.TrySetResult(new SseItem<string>(JsonSerializer.Serialize(GetCurrentUpdate()), "progress"));
-            Action<ScreenshotNotification> screenshotHandler = (s) =>
-                tcs.TrySetResult(new SseItem<string>(JsonSerializer.Serialize(s), "screenshot"));
-            Action<ScreenshotDetectedNotification> detectedHandler = (s) =>
-                tcs.TrySetResult(new SseItem<string>(JsonSerializer.Serialize(s), "screenshot-detected"));
-            Action<ScreenshotStatusChangedNotification> statusHandler = (s) =>
-                tcs.TrySetResult(new SseItem<string>(JsonSerializer.Serialize(s), "screenshot-status"));
+        void Send<T>(T payload, string eventType) =>
+            channel.Writer.TryWrite(new SseItem<string>(JsonSerializer.Serialize(payload), eventType));
 
-            OnProgressChange += progressHandler;
-            OnScreenshotIndexed += screenshotHandler;
-            OnScreenshotDetected += detectedHandler;
-            OnScreenshotStatusChanged += statusHandler;
+        Action progressHandler = () => Send(GetSnapshot(), "progress");
+        Action<ScreenshotNotification> indexedHandler = s => Send(s, "screenshot");
+        Action<ScreenshotDetectedNotification> detectedHandler = s => Send(s, "screenshot-detected");
+        Action<ScreenshotStatusChangedNotification> statusHandler = s => Send(s, "screenshot-status");
 
-            SseItem<string>? result = null;
-            try
+        OnProgressChange += progressHandler;
+        OnScreenshotIndexed += indexedHandler;
+        OnScreenshotDetected += detectedHandler;
+        OnScreenshotStatusChanged += statusHandler;
+        try
+        {
+            yield return new SseItem<string>(JsonSerializer.Serialize(GetSnapshot()), "progress");
+
+            while (true)
             {
-                result = await tcs.Task.WaitAsync(ct);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            finally
-            {
-                OnProgressChange -= progressHandler;
-                OnScreenshotIndexed -= screenshotHandler;
-                OnScreenshotDetected -= detectedHandler;
-                OnScreenshotStatusChanged -= statusHandler;
-            }
+                try
+                {
+                    if (!await channel.Reader.WaitToReadAsync(ct)) break;
+                }
+                catch (OperationCanceledException)
+                {
+                    break; // client disconnected
+                }
 
-            if (result.HasValue) yield return result.Value;
+                while (channel.Reader.TryRead(out var item))
+                {
+                    yield return item;
+                }
+            }
+        }
+        finally
+        {
+            OnProgressChange -= progressHandler;
+            OnScreenshotIndexed -= indexedHandler;
+            OnScreenshotDetected -= detectedHandler;
+            OnScreenshotStatusChanged -= statusHandler;
         }
     }
 
-    private ProgressUpdate GetCurrentUpdate() => new(
+    public ProgressUpdate GetSnapshot() => new(
         IsScanning,
         TotalFiles,
         AlreadyIndexed,

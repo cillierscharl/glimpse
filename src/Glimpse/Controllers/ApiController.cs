@@ -10,19 +10,9 @@ namespace Glimpse.Controllers;
 [ApiController]
 [Route("api")]
 [Produces("application/json")]
-public class ApiController : ControllerBase
+public class ApiController(GlimpseDbContext db, ScanProgressService progress, ScreenshotWatcherService watcher)
+    : ControllerBase
 {
-    private readonly GlimpseDbContext _db;
-    private readonly ScanProgressService _progress;
-    private readonly ScreenshotWatcherService _watcher;
-
-    public ApiController(GlimpseDbContext db, ScanProgressService progress, ScreenshotWatcherService watcher)
-    {
-        _db = db;
-        _progress = progress;
-        _watcher = watcher;
-    }
-
     /// <summary>
     /// Search screenshots by text content or date
     /// </summary>
@@ -42,33 +32,11 @@ public class ApiController : ControllerBase
         limit = Math.Clamp(limit, 1, 100);
         offset = Math.Max(0, offset);
 
-        var query = _db.Screenshots.Include(s => s.Tags).AsQueryable();
-
-        if (!string.IsNullOrWhiteSpace(q))
-        {
-            var dateRange = DateHelper.TryParseDate(q);
-            if (dateRange.HasValue)
-            {
-                var (start, end) = dateRange.Value;
-                query = query.Where(s => s.CreatedAt >= start && s.CreatedAt < end);
-            }
-            else
-            {
-                query = query.Where(s =>
-                    (s.OcrText != null && EF.Functions.Like(s.OcrText, $"%{q}%")) ||
-                    (s.Notes != null && EF.Functions.Like(s.Notes, $"%{q}%")));
-            }
-        }
-
-        // Tag filter
-        if (!string.IsNullOrWhiteSpace(tag))
-        {
-            query = query.Where(s => s.Tags.Any(t => t.Name == tag.ToLowerInvariant()));
-        }
+        var query = db.Screenshots.Search(q, tag);
 
         var totalCount = await query.CountAsync();
         var screenshots = await query
-            .OrderByDescending(s => s.CreatedAt)
+            .NewestFirst()
             .Skip(offset)
             .Take(limit)
             .ToListAsync();
@@ -76,23 +44,7 @@ public class ApiController : ControllerBase
         var results = new List<ScreenshotResult>();
         foreach (var s in screenshots)
         {
-            var result = new ScreenshotResult
-            {
-                Id = s.Id,
-                Filename = Path.GetFileName(s.Path),
-                OcrText = s.OcrText,
-                Notes = s.Notes,
-                CreatedAt = s.CreatedAt,
-                Width = s.Width,
-                Height = s.Height
-            };
-
-            if (includeImages)
-            {
-                result.ImageBase64 = await FileHelper.GetBase64DataUrlAsync(s.Path);
-            }
-
-            results.Add(result);
+            results.Add(await ToResultAsync(s, includeImages));
         }
 
         return Ok(new SearchResponse
@@ -111,58 +63,30 @@ public class ApiController : ControllerBase
     [HttpGet("screenshots/{id}")]
     public async Task<ActionResult<ScreenshotResult>> GetScreenshot(int id, [FromQuery] bool includeImage = false)
     {
-        var s = await _db.Screenshots.FindAsync(id);
+        var s = await db.Screenshots.FindAsync(id);
         if (s == null) return NotFound();
 
-        var result = new ScreenshotResult
-        {
-            Id = s.Id,
-            Filename = Path.GetFileName(s.Path),
-            OcrText = s.OcrText,
-            Notes = s.Notes,
-            CreatedAt = s.CreatedAt,
-            Width = s.Width,
-            Height = s.Height
-        };
-
-        if (includeImage)
-        {
-            result.ImageBase64 = await FileHelper.GetBase64DataUrlAsync(s.Path);
-        }
-
-        return Ok(result);
+        return Ok(await ToResultAsync(s, includeImage));
     }
 
     [HttpGet("progress")]
-    public IActionResult Progress()
-    {
-        return Ok(new
-        {
-            _progress.IsScanning,
-            _progress.TotalFiles,
-            _progress.AlreadyIndexed,
-            _progress.ProcessedFiles,
-            _progress.RemainingFiles,
-            _progress.PercentComplete,
-            _progress.CurrentFile
-        });
-    }
+    public ActionResult<ProgressUpdate> Progress() => progress.GetSnapshot();
 
     [HttpPost("screenshots/{id}/reocr")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> ReOcr(int id)
     {
-        var screenshot = await _db.Screenshots.FindAsync(id);
+        var screenshot = await db.Screenshots.FindAsync(id);
         if (screenshot == null) return NotFound();
 
         // Reset status to Pending and clear OCR text
         screenshot.Status = ScreenshotStatus.Pending;
         screenshot.OcrText = null;
-        await _db.SaveChangesAsync();
-        _progress.NotifyScreenshotStatusChanged(id, ScreenshotStatus.Pending);
+        await db.SaveChangesAsync();
+        progress.NotifyScreenshotStatusChanged(id, ScreenshotStatus.Pending);
 
         // Enqueue for processing via the priority queue
-        await _watcher.EnqueueForProcessingAsync(screenshot.Path);
+        await watcher.EnqueueForProcessingAsync(screenshot.Path);
 
         return Accepted();
     }
@@ -171,11 +95,11 @@ public class ApiController : ControllerBase
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> UpdateNotes(int id, [FromBody] NotesRequest request)
     {
-        var screenshot = await _db.Screenshots.FindAsync(id);
+        var screenshot = await db.Screenshots.FindAsync(id);
         if (screenshot == null) return NotFound();
 
         screenshot.Notes = request.Notes;
-        await _db.SaveChangesAsync();
+        await db.SaveChangesAsync();
 
         return Ok();
     }
@@ -184,7 +108,7 @@ public class ApiController : ControllerBase
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> DeleteScreenshot(int id)
     {
-        var screenshot = await _db.Screenshots.FindAsync(id);
+        var screenshot = await db.Screenshots.FindAsync(id);
         if (screenshot == null) return NotFound();
 
         // Delete file from disk first - if this fails, don't remove from DB
@@ -193,17 +117,17 @@ public class ApiController : ControllerBase
             System.IO.File.Delete(screenshot.Path);
         }
 
-        // Find next screenshot (by date, descending)
-        var nextScreenshot = await _db.Screenshots
-            .Where(s => s.CreatedAt < screenshot.CreatedAt)
-            .OrderByDescending(s => s.CreatedAt)
+        // The screenshot to show next: the one after this in the grid's (newest-first) order
+        var nextId = await db.Screenshots
+            .After(PageCursor.From(screenshot))
+            .NewestFirst()
+            .Select(s => (int?)s.Id)
             .FirstOrDefaultAsync();
 
-        // Remove from database
-        _db.Screenshots.Remove(screenshot);
-        await _db.SaveChangesAsync();
+        db.Screenshots.Remove(screenshot);
+        await db.SaveChangesAsync();
 
-        return Ok(new { nextId = nextScreenshot?.Id });
+        return Ok(new { nextId });
     }
 
     // ===== Tag Endpoints =====
@@ -214,7 +138,7 @@ public class ApiController : ControllerBase
     [HttpGet("tags")]
     public async Task<ActionResult<List<TagDto>>> GetTags()
     {
-        var tags = await _db.Tags
+        var tags = await db.Tags
             .OrderBy(t => t.Name)
             .Select(t => new TagDto { Id = t.Id, Name = t.Name })
             .ToListAsync();
@@ -227,7 +151,7 @@ public class ApiController : ControllerBase
     [HttpGet("screenshots/{id}/tags")]
     public async Task<ActionResult<List<TagDto>>> GetScreenshotTags(int id)
     {
-        var screenshot = await _db.Screenshots
+        var screenshot = await db.Screenshots
             .Include(s => s.Tags)
             .FirstOrDefaultAsync(s => s.Id == id);
         if (screenshot == null) return NotFound();
@@ -246,7 +170,7 @@ public class ApiController : ControllerBase
     [ValidateAntiForgeryToken]
     public async Task<ActionResult<TagDto>> AddTagToScreenshot(int id, [FromBody] AddTagRequest request)
     {
-        var screenshot = await _db.Screenshots
+        var screenshot = await db.Screenshots
             .Include(s => s.Tags)
             .FirstOrDefaultAsync(s => s.Id == id);
         if (screenshot == null) return NotFound();
@@ -255,18 +179,18 @@ public class ApiController : ControllerBase
         if (string.IsNullOrEmpty(tagName)) return BadRequest("Tag name required");
 
         // Find or create tag
-        var tag = await _db.Tags.FirstOrDefaultAsync(t => t.Name == tagName);
+        var tag = await db.Tags.FirstOrDefaultAsync(t => t.Name == tagName);
         if (tag == null)
         {
             tag = new Tag { Name = tagName };
-            _db.Tags.Add(tag);
+            db.Tags.Add(tag);
         }
 
         // Add if not already tagged
         if (!screenshot.Tags.Any(t => t.Id == tag.Id))
         {
             screenshot.Tags.Add(tag);
-            await _db.SaveChangesAsync();
+            await db.SaveChangesAsync();
         }
 
         return Ok(new TagDto { Id = tag.Id, Name = tag.Name });
@@ -279,7 +203,7 @@ public class ApiController : ControllerBase
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> RemoveTagFromScreenshot(int id, int tagId)
     {
-        var screenshot = await _db.Screenshots
+        var screenshot = await db.Screenshots
             .Include(s => s.Tags)
             .FirstOrDefaultAsync(s => s.Id == id);
         if (screenshot == null) return NotFound();
@@ -288,17 +212,29 @@ public class ApiController : ControllerBase
         if (tag != null)
         {
             screenshot.Tags.Remove(tag);
-            await _db.SaveChangesAsync();
+            await db.SaveChangesAsync();
 
             // Clean up orphaned tag
-            var stillUsed = await _db.Screenshots.AnyAsync(s => s.Tags.Any(t => t.Id == tagId));
+            var stillUsed = await db.Screenshots.AnyAsync(s => s.Tags.Any(t => t.Id == tagId));
             if (!stillUsed)
             {
-                _db.Tags.Remove(tag);
-                await _db.SaveChangesAsync();
+                db.Tags.Remove(tag);
+                await db.SaveChangesAsync();
             }
         }
 
         return NoContent();
     }
+
+    private static async Task<ScreenshotResult> ToResultAsync(Screenshot s, bool includeImage) => new()
+    {
+        Id = s.Id,
+        Filename = Path.GetFileName(s.Path),
+        OcrText = s.OcrText,
+        Notes = s.Notes,
+        CreatedAt = s.CreatedAt,
+        Width = s.Width,
+        Height = s.Height,
+        ImageBase64 = includeImage ? await FileHelper.GetBase64DataUrlAsync(s.Path) : null
+    };
 }

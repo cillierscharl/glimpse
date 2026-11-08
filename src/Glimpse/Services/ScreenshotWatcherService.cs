@@ -1,10 +1,10 @@
-using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading.Channels;
 using Glimpse.Data;
+using Glimpse.Helpers;
 using Glimpse.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Primitives;
 
 namespace Glimpse.Services;
 
@@ -16,11 +16,10 @@ public class ScreenshotWatcherService : BackgroundService
     private readonly ILogger<ScreenshotWatcherService> _logger;
     private readonly string _watchPath;
     private readonly string[] _extensions;
-    private readonly ConcurrentDictionary<string, DateTime> _recentFiles = new();
+    private readonly bool _metricsEnabled;
     private readonly Channel<string> _priorityQueue = Channel.CreateUnbounded<string>();
     private readonly Channel<string> _backlogQueue = Channel.CreateUnbounded<string>();
     private PhysicalFileProvider? _fileProvider;
-    private CancellationTokenSource? _watcherCts;
 
     public ScreenshotWatcherService(
         IServiceScopeFactory scopeFactory,
@@ -33,9 +32,9 @@ public class ScreenshotWatcherService : BackgroundService
         _ocrService = ocrService;
         _progress = progress;
         _logger = logger;
-        _watchPath = config.GetValue<string>("Screenshots:WatchPath")
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Pictures/Screenshots");
+        _watchPath = config.GetWatchPath();
         _extensions = config.GetSection("Screenshots:Extensions").Get<string[]>() ?? [".png", ".jpg", ".jpeg"];
+        _metricsEnabled = config.GetValue<bool>("Metrics:Enabled");
     }
 
     /// <summary>
@@ -60,25 +59,28 @@ public class ScreenshotWatcherService : BackgroundService
         _progress.OllamaStatus = _ocrService.Status;
         await _ocrService.WaitForReadyAsync(stoppingToken);
 
-        if (!Directory.Exists(_watchPath))
-        {
-            Directory.CreateDirectory(_watchPath);
-            _logger.LogInformation("Created watch directory: {Path}", _watchPath);
-        }
-
         // Start watching for new files using PhysicalFileProvider (supports polling via DOTNET_USE_POLLING_FILE_WATCHER)
         _fileProvider = new PhysicalFileProvider(_watchPath);
-        _watcherCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-
-        // Start the file watcher loop in the background
-        _ = WatchForNewFilesAsync(_watcherCts.Token);
+        _ = WatchForNewFilesAsync(stoppingToken);
 
         _logger.LogInformation("Watching for screenshots in: {Path} (polling: {Polling})",
             _watchPath,
             Environment.GetEnvironmentVariable("DOTNET_USE_POLLING_FILE_WATCHER") == "true" ? "enabled" : "disabled");
 
-        // Process images from queue
-        await ProcessQueueAsync(stoppingToken);
+        if (_metricsEnabled)
+        {
+            _ = UpdateMetricsAsync(stoppingToken);
+        }
+
+        await ProcessBacklogAsync(stoppingToken);
+
+        // Continue listening for new files
+        await foreach (var file in _priorityQueue.Reader.ReadAllAsync(stoppingToken))
+        {
+            _progress.CurrentFile = Path.GetFileName(file);
+            _progress.NotifyChange();
+            await ProcessImageAsync(file, stoppingToken, notify: true);
+        }
     }
 
     private async Task WatchForNewFilesAsync(CancellationToken ct)
@@ -92,26 +94,20 @@ public class ScreenshotWatcherService : BackgroundService
             {
                 // Watch for any file changes in the directory
                 var changeToken = _fileProvider!.Watch("*.*");
-                var tcs = new TaskCompletionSource<bool>();
+                var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
                 using var registration = changeToken.RegisterChangeCallback(_ => tcs.TrySetResult(true), null);
-
-                // Wait for change or cancellation
-                using var ctRegistration = ct.Register(() => tcs.TrySetCanceled());
-                await tcs.Task;
-
-                if (ct.IsCancellationRequested) break;
+                await tcs.Task.WaitAsync(ct);
 
                 // Small delay to let file writes complete
                 await Task.Delay(500, ct);
 
-                // Check for new files
+                // Diffing against the previous listing means each new file is reported exactly once,
+                // however many change notifications its creation triggers.
                 var currentFiles = Directory.EnumerateFiles(_watchPath)
                     .Where(IsValidExtension)
                     .ToHashSet();
 
-                var newFiles = currentFiles.Except(knownFiles).ToList();
-
-                foreach (var filePath in newFiles)
+                foreach (var filePath in currentFiles.Except(knownFiles))
                 {
                     await OnNewFileDetectedAsync(filePath);
                 }
@@ -134,21 +130,7 @@ public class ScreenshotWatcherService : BackgroundService
     {
         try
         {
-            // Debounce: ignore if we've seen this file recently
-            var now = DateTime.UtcNow;
-            if (_recentFiles.TryGetValue(filePath, out var lastSeen) && (now - lastSeen).TotalSeconds < 2)
-                return;
-            _recentFiles[filePath] = now;
-
-            // Clean up old entries (older than 1 minute)
-            var cutoff = now.AddMinutes(-1);
-            foreach (var key in _recentFiles.Keys)
-            {
-                if (_recentFiles.TryGetValue(key, out var time) && time < cutoff)
-                    _recentFiles.TryRemove(key, out _);
-            }
-
-            // Insert screenshot record immediately as Pending
+            // Insert screenshot record immediately as Pending so it shows up in the UI
             var screenshot = await InsertPendingScreenshotAsync(filePath);
             if (screenshot != null)
             {
@@ -187,81 +169,67 @@ public class ScreenshotWatcherService : BackgroundService
         return screenshot;
     }
 
-    private async Task ProcessQueueAsync(CancellationToken stoppingToken)
+    /// <summary>
+    /// Queues everything that still needs OCR (files not yet in the database, plus rows left unfinished
+    /// by a previous run) and processes it with two workers, giving newly detected files priority.
+    /// </summary>
+    private async Task ProcessBacklogAsync(CancellationToken stoppingToken)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<GlimpseDbContext>();
-
-        // Find any incomplete screenshots (Pending or Processing) that need to be reprocessed
-        // This handles the case where the app crashed mid-processing
-        var incompleteScreenshots = await db.Screenshots
-            .Where(s => s.Status == ScreenshotStatus.Pending || s.Status == ScreenshotStatus.Processing)
-            .OrderByDescending(s => s.CreatedAt)
-            .Select(s => s.Path)
-            .ToListAsync(stoppingToken);
-
-        if (incompleteScreenshots.Count > 0)
+        using (var scope = _scopeFactory.CreateScope())
         {
-            _logger.LogInformation("Found {Count} incomplete screenshots to reprocess", incompleteScreenshots.Count);
-        }
+            var db = scope.ServiceProvider.GetRequiredService<GlimpseDbContext>();
 
-        var existingPaths = (await db.Screenshots.Select(s => s.Path).ToListAsync(stoppingToken)).ToHashSet();
+            // Pending/Processing rows mean the app stopped mid-run. Failed rows are retried too, since the
+            // usual cause is transient (Ollama restarting or running out of memory).
+            var unfinished = await db.Screenshots
+                .Where(s => s.Status != ScreenshotStatus.Completed)
+                .OrderByDescending(s => s.CreatedAt)
+                .Select(s => s.Path)
+                .ToListAsync(stoppingToken);
 
-        var allFiles = Directory.EnumerateFiles(_watchPath)
-            .Where(f => IsValidExtension(f))
-            .ToList();
+            var existingPaths = (await db.Screenshots.Select(s => s.Path).ToListAsync(stoppingToken)).ToHashSet();
 
-        var backlogFiles = allFiles
-            .Where(f => !existingPaths.Contains(f))
-            .OrderByDescending(f => File.GetCreationTimeUtc(f))
-            .ToList();
+            var allFiles = Directory.EnumerateFiles(_watchPath)
+                .Where(IsValidExtension)
+                .ToList();
 
-        var totalToProcess = backlogFiles.Count + incompleteScreenshots.Count;
-        _progress.TotalFiles = allFiles.Count;
-        _progress.AlreadyIndexed = existingPaths.Count - incompleteScreenshots.Count;
-        _progress.ProcessedFiles = 0;
-        _progress.IsScanning = totalToProcess > 0;
+            var newFiles = allFiles
+                .Where(f => !existingPaths.Contains(f))
+                .OrderByDescending(File.GetCreationTimeUtc)
+                .ToList();
 
-        _logger.LogInformation("Found {Count} new screenshots to process, {Incomplete} incomplete ({Indexed} already indexed)",
-            backlogFiles.Count, incompleteScreenshots.Count, existingPaths.Count - incompleteScreenshots.Count);
+            _progress.TotalFiles = allFiles.Count;
+            _progress.AlreadyIndexed = existingPaths.Count - unfinished.Count;
+            _progress.ProcessedFiles = 0;
+            _progress.IsScanning = newFiles.Count + unfinished.Count > 0;
 
-        // Insert all backlog files as Pending immediately so they show in UI
-        foreach (var file in backlogFiles)
-        {
-            var screenshot = new Screenshot
+            _logger.LogInformation("Found {Count} new screenshots to process, {Unfinished} unfinished ({Indexed} already indexed)",
+                newFiles.Count, unfinished.Count, _progress.AlreadyIndexed);
+
+            // Insert all new files as Pending immediately so they show in UI
+            foreach (var file in newFiles)
             {
-                Path = file,
-                Status = ScreenshotStatus.Pending,
-                CreatedAt = File.GetCreationTimeUtc(file)
-            };
-            db.Screenshots.Add(screenshot);
-        }
-        if (backlogFiles.Count > 0)
-        {
-            await db.SaveChangesAsync(stoppingToken);
-            _logger.LogInformation("Inserted {Count} pending screenshots", backlogFiles.Count);
-        }
+                db.Screenshots.Add(new Screenshot
+                {
+                    Path = file,
+                    Status = ScreenshotStatus.Pending,
+                    CreatedAt = File.GetCreationTimeUtc(file)
+                });
+            }
+            if (newFiles.Count > 0)
+            {
+                await db.SaveChangesAsync(stoppingToken);
+                _logger.LogInformation("Inserted {Count} pending screenshots", newFiles.Count);
+            }
 
-        // Queue incomplete screenshots first (recovery from crash)
-        foreach (var file in incompleteScreenshots)
-        {
-            if (File.Exists(file))
+            // Unfinished screenshots first (recovery from crash), then the new files
+            foreach (var file in unfinished.Where(File.Exists).Concat(newFiles))
             {
                 await _backlogQueue.Writer.WriteAsync(file, stoppingToken);
             }
+            _backlogQueue.Writer.Complete();
         }
 
-        // Queue new backlog files for OCR processing
-        foreach (var file in backlogFiles)
-        {
-            await _backlogQueue.Writer.WriteAsync(file, stoppingToken);
-        }
-        _backlogQueue.Writer.Complete();
-
-        // Start metrics updater in background (doesn't block)
-        _ = UpdateMetricsAsync(stoppingToken);
-
-        // Process with 2 parallel workers
         await Task.WhenAll(
             ProcessWorkerAsync(stoppingToken),
             ProcessWorkerAsync(stoppingToken)
@@ -271,14 +239,6 @@ public class ScreenshotWatcherService : BackgroundService
         _progress.CurrentFile = null;
         _progress.NotifyChange();
         _logger.LogInformation("Finished processing backlog");
-
-        // Continue listening for new files
-        await foreach (var file in _priorityQueue.Reader.ReadAllAsync(stoppingToken))
-        {
-            _progress.CurrentFile = Path.GetFileName(file);
-            _progress.NotifyChange();
-            await ProcessImageAsync(file, stoppingToken, notify: true);
-        }
     }
 
     private async Task ProcessWorkerAsync(CancellationToken ct)
@@ -303,12 +263,12 @@ public class ScreenshotWatcherService : BackgroundService
             _progress.CurrentFile = Path.GetFileName(file);
             _progress.NotifyChange();
             await ProcessImageAsync(file, ct, notify: false);
-            Interlocked.Increment(ref _progress._processedFiles);
+            _progress.IncrementProcessed();
             _progress.NotifyChange();
         }
     }
 
-    private async Task ProcessImageAsync(string path, CancellationToken cancellationToken = default, bool notify = false)
+    private async Task ProcessImageAsync(string path, CancellationToken cancellationToken, bool notify)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<GlimpseDbContext>();
@@ -342,21 +302,18 @@ public class ScreenshotWatcherService : BackgroundService
 
             _logger.LogInformation("Processing OCR: {Path}", path);
 
-            // Perform OCR with timing
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var stopwatch = Stopwatch.StartNew();
             var text = await _ocrService.ExtractTextAsync(path, cancellationToken);
-            stopwatch.Stop();
             GlimpseMetrics.OcrDuration.Observe(stopwatch.Elapsed.TotalSeconds);
 
-            // Capture image dimensions
+            // Capture image dimensions (Identify only reads the header, unlike Load which decodes every pixel)
             try
             {
-                using var stream = File.OpenRead(path);
-                using var image = await SixLabors.ImageSharp.Image.LoadAsync(stream, cancellationToken);
-                screenshot.Width = image.Width;
-                screenshot.Height = image.Height;
+                var info = await SixLabors.ImageSharp.Image.IdentifyAsync(path, cancellationToken);
+                screenshot.Width = info.Width;
+                screenshot.Height = info.Height;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogWarning(ex, "Failed to read image dimensions: {Path}", path);
             }
@@ -376,12 +333,18 @@ public class ScreenshotWatcherService : BackgroundService
             }
             _logger.LogInformation("Indexed: {Path} ({Length} chars)", path, text.Length);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Shutting down: leave the row as Processing so it's picked up again on the next start.
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to process: {Path}", path);
             GlimpseMetrics.ScreenshotsProcessed.WithLabels("failed").Inc();
 
-            // Mark as failed
+            // Mark as failed. Start from a clean context: the failure may have come from SaveChanges itself.
+            db.ChangeTracker.Clear();
             var screenshot = await db.Screenshots.FirstOrDefaultAsync(s => s.Path == path, cancellationToken);
             if (screenshot != null && screenshot.Status != ScreenshotStatus.Completed)
             {
@@ -409,10 +372,18 @@ public class ScreenshotWatcherService : BackgroundService
                 GlimpseMetrics.ScreenshotsPending.Set(pending);
                 GlimpseMetrics.QueueSize.WithLabels("priority").Set(_priorityQueue.Reader.Count);
                 GlimpseMetrics.QueueSize.WithLabels("backlog").Set(_backlogQueue.Reader.CanCount ? _backlogQueue.Reader.Count : 0);
-            }
-            catch { }
 
-            await Task.Delay(TimeSpan.FromSeconds(15), ct);
+                await Task.Delay(TimeSpan.FromSeconds(15), ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to update metrics");
+                await Task.Delay(TimeSpan.FromSeconds(15), ct);
+            }
         }
     }
 
@@ -421,8 +392,6 @@ public class ScreenshotWatcherService : BackgroundService
 
     public override void Dispose()
     {
-        _watcherCts?.Cancel();
-        _watcherCts?.Dispose();
         _fileProvider?.Dispose();
         base.Dispose();
     }

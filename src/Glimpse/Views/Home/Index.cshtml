@@ -1,5 +1,4 @@
-@using Glimpse.Services
-@model List<Glimpse.Models.Screenshot>
+@model List<Screenshot>
 @{
     ViewData["Title"] = "Search";
     var progress = ViewBag.Progress as ScanProgressService;
@@ -85,7 +84,7 @@ else if (progress?.IsScanning == true)
 
 <!-- Tag Filters -->
 @{
-    var allTags = ViewBag.AllTags as List<Glimpse.Models.Tag>;
+    var allTags = ViewBag.AllTags as List<Tag>;
     var currentTag = ViewBag.CurrentTag as string;
 }
 @if (allTags?.Count > 0)
@@ -95,16 +94,14 @@ else if (progress?.IsScanning == true)
         @foreach (var tag in allTags)
         {
             var isActive = tag.Name == currentTag;
-            var tagUrl = $"/?tag={tag.Name}" + (query != null ? $"&q={query}" : "");
-            <a href="@tagUrl"
+            <a href="@LinkHelper.Search(query, tag.Name)"
                class="px-3 py-1.5 text-sm rounded-lg transition-colors @(isActive ? "bg-violet-500 text-white" : "bg-dark-800 text-dark-400 hover:bg-dark-700")">
                 @tag.Name
             </a>
         }
         @if (currentTag != null)
         {
-            var clearUrl = "/" + (query != null ? $"?q={query}" : "");
-            <a href="@clearUrl"
+            <a href="@LinkHelper.Search(query)"
                class="px-3 py-1.5 text-sm text-dark-500 hover:text-dark-300 transition-colors">
                 Clear filter
             </a>
@@ -135,13 +132,11 @@ else if (progress?.IsScanning == true)
 </div>
 
 @{
-    var hasMore = ViewBag.HasMore ?? false;
-    var currentPage = ViewBag.CurrentPage ?? 0;
+    var nextCursor = ViewBag.NextCursor as string;
     var totalCount = ViewBag.TotalCount ?? 0;
-    var initialIds = string.Join(",", Model.Select(s => s.Id));
 }
 
-@if (Model.Count == 0 && currentPage == 0)
+@if (Model.Count == 0)
 {
     <div class="flex flex-col items-center justify-center py-20 text-center">
         <div class="w-20 h-20 rounded-3xl bg-dark-800 flex items-center justify-center mb-6">
@@ -177,15 +172,13 @@ else
     </div>
     <div id="screenshots-grid"
          class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
-         data-page="@currentPage"
-         data-has-more="@hasMore.ToString().ToLower()"
+         data-cursor="@nextCursor"
          data-query="@query"
-         data-tag="@currentTag"
-         data-rendered-ids="@initialIds">
+         data-tag="@currentTag">
         @await Html.PartialAsync("_ScreenshotGrid", Model)
     </div>
 
-    @if (hasMore)
+    @if (nextCursor != null)
     {
         <div id="load-more-container" class="mt-8 flex justify-center">
             <button id="load-more-btn"
@@ -205,18 +198,10 @@ else
 }
 
 <script>
-    // Track rendered screenshot IDs to prevent duplicates
-    const renderedIds = new Set();
-
-    // Initialize from server-rendered data
-    (function() {
-        const grid = document.getElementById('screenshots-grid');
-        if (grid && grid.dataset.renderedIds) {
-            grid.dataset.renderedIds.split(',').forEach(id => {
-                if (id) renderedIds.add(parseInt(id));
-            });
-        }
-    })();
+    // Track rendered screenshot IDs: a card can arrive both via SSE and via the next page load
+    const renderedIds = new Set(
+        Array.from(document.querySelectorAll('[id^="screenshot-card-"]'),
+            card => parseInt(card.id.replace('screenshot-card-', ''))));
 
     // Check if screenshot is already rendered
     function isRendered(id) {
@@ -228,37 +213,36 @@ else
         renderedIds.add(parseInt(id));
     }
 
-    // Load more screenshots
+    // URL for a single card partial, keeping the current search so the card links back to it
+    function cardUrl(id) {
+        const query = document.getElementById('screenshots-grid')?.dataset.query;
+        return `/Home/Card/${id}` + (query ? `?q=${encodeURIComponent(query)}` : '');
+    }
+
+    // Load the page after the cursor (the last screenshot loaded so far)
     async function loadMore() {
         const grid = document.getElementById('screenshots-grid');
         const btn = document.getElementById('load-more-btn');
         const spinner = document.getElementById('load-more-spinner');
         const container = document.getElementById('load-more-container');
 
-        if (!grid) return;
+        if (!grid || !grid.dataset.cursor) return;
 
-        const currentPage = parseInt(grid.dataset.page) || 0;
-        const nextPage = currentPage + 1;
-        const query = grid.dataset.query || '';
-        const tag = grid.dataset.tag || '';
-
-        // Build URL with exclude parameter to skip already-rendered IDs
-        const excludeIds = Array.from(renderedIds).join(',');
-        let url = `/?page=${nextPage}`;
-        if (query) url += `&q=${encodeURIComponent(query)}`;
-        if (tag) url += `&tag=${encodeURIComponent(tag)}`;
-        if (excludeIds) url += `&exclude=${excludeIds}`;
+        const params = new URLSearchParams({ before: grid.dataset.cursor });
+        if (grid.dataset.query) params.set('q', grid.dataset.query);
+        if (grid.dataset.tag) params.set('tag', grid.dataset.tag);
 
         // Show loading state
         btn.style.display = 'none';
         spinner.style.display = 'flex';
 
         try {
-            const response = await fetch(url, {
+            const response = await fetch(`/?${params}`, {
                 headers: { 'X-Requested-With': 'XMLHttpRequest' }
             });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const html = await response.text();
-            const hasMore = response.headers.get('X-Has-More') === 'true';
+            const nextCursor = response.headers.get('X-Next-Cursor');
 
             if (html.trim()) {
                 // Parse new cards and track their IDs
@@ -276,10 +260,9 @@ else
                 document.getElementById('shown-count').textContent = renderedIds.size;
             }
 
-            grid.dataset.page = nextPage;
-            grid.dataset.hasMore = hasMore;
+            grid.dataset.cursor = nextCursor || '';
 
-            if (hasMore) {
+            if (nextCursor) {
                 btn.style.display = 'block';
                 spinner.style.display = 'none';
             } else {
@@ -298,7 +281,7 @@ else
         const grid = document.getElementById('screenshots-grid');
         const container = document.getElementById('load-more-container');
         if (!grid || !container || loadingMore) return;
-        if (grid.dataset.hasMore !== 'true') return;
+        if (!grid.dataset.cursor) return;
 
         const rect = container.getBoundingClientRect();
         if (rect.top < window.innerHeight + 500) {
@@ -355,8 +338,8 @@ else
         if (isRendered(s.Id)) return;
 
         // Fetch and prepend the new card
-        fetch(`/?partial=card&id=${s.Id}`, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-            .then(r => r.text())
+        fetch(cardUrl(s.Id))
+            .then(r => r.ok ? r.text() : '')
             .then(html => {
                 if (html.trim()) {
                     // Double-check before inserting (race condition guard)
@@ -380,8 +363,8 @@ else
         if (!card) return;
 
         // Fetch updated card HTML and replace
-        fetch(`/?partial=card&id=${s.Id}`, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-            .then(r => r.text())
+        fetch(cardUrl(s.Id))
+            .then(r => r.ok ? r.text() : '')
             .then(html => {
                 if (html.trim()) {
                     card.outerHTML = html;

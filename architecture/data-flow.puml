@@ -10,12 +10,12 @@ start
 :New screenshot saved;
 
 |Watcher Service|
-:FileSystemWatcher detects file;
-:Debounce (2 sec);
+:Watcher diffs directory listing;
 
-if (New file?) then (yes)
+if (Detected while running?) then (yes)
+  :Insert as Pending;
   :Add to Priority Queue;
-else (existing)
+else (found at startup, or unfinished)
   :Add to Backlog Queue;
 endif
 
@@ -35,11 +35,13 @@ end note
 
 |OCR Worker|
 if (Success?) then (yes)
+  :Read image dimensions;
   :Set status = Completed;
   :Store OCR text;
 else (no)
   :Set status = Failed;
   :Log error;
+  note right: Retried on next start
 endif
 
 |SSE Broadcast|
