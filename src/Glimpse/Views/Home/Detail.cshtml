@@ -1,24 +1,28 @@
-@model Glimpse.Models.Screenshot
-@using Glimpse.Models
+@model Screenshot
 @{
     ViewData["Title"] = "Screenshot Details";
     var filename = System.IO.Path.GetFileName(Model.Path);
+    var imageUrl = LinkHelper.Image(Model.Path);
+    var returnQuery = ViewBag.ReturnQuery as string;
+    var backUrl = LinkHelper.Search(returnQuery);
+    var prevPath = ViewBag.PrevPath as string;
+    var nextPath = ViewBag.NextPath as string;
     var isPending = Model.Status == ScreenshotStatus.Pending || Model.Status == ScreenshotStatus.Processing;
 }
 
 @section Head {
-    @if (ViewBag.PrevFilename != null)
+    @if (prevPath != null)
     {
-        <link rel="prefetch" href="/screenshots/@ViewBag.PrevFilename" as="image">
+        <link rel="prefetch" href="@LinkHelper.Image(prevPath)" as="image">
     }
-    @if (ViewBag.NextFilename != null)
+    @if (nextPath != null)
     {
-        <link rel="prefetch" href="/screenshots/@ViewBag.NextFilename" as="image">
+        <link rel="prefetch" href="@LinkHelper.Image(nextPath)" as="image">
     }
 }
 
 <div class="mb-6 flex items-center justify-between">
-    <a href="/@(ViewBag.ReturnQuery != null ? "?q=" + ViewBag.ReturnQuery : "")" class="inline-flex items-center gap-2 text-dark-400 hover:text-dark-200 transition-colors">
+    <a href="@backUrl" class="inline-flex items-center gap-2 text-dark-400 hover:text-dark-200 transition-colors">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
         </svg>
@@ -29,7 +33,7 @@
     <div class="flex items-center gap-2">
         @if (ViewBag.PrevId != null)
         {
-            <a href="/detail/@ViewBag.PrevId@(ViewBag.ReturnQuery != null ? "?q=" + ViewBag.ReturnQuery : "")"
+            <a href="@LinkHelper.Detail((int)ViewBag.PrevId, returnQuery)"
                id="nav-prev"
                class="inline-flex items-center gap-2 px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-300 font-medium rounded-xl border border-dark-700 transition-all"
                title="Previous (older) - Left arrow key">
@@ -51,7 +55,7 @@
 
         @if (ViewBag.NextId != null)
         {
-            <a href="/detail/@ViewBag.NextId@(ViewBag.ReturnQuery != null ? "?q=" + ViewBag.ReturnQuery : "")"
+            <a href="@LinkHelper.Detail((int)ViewBag.NextId, returnQuery)"
                id="nav-next"
                class="inline-flex items-center gap-2 px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-300 font-medium rounded-xl border border-dark-700 transition-all"
                title="Next (newer) - Right arrow key">
@@ -77,17 +81,17 @@
     <!-- Image - Full Width -->
     <div>
         <div class="rounded-2xl overflow-hidden bg-dark-900 border border-dark-800">
-            <img src="/screenshots/@filename" alt="Screenshot" class="max-w-full h-auto" @if(Model.Width > 0){<text>width="@Model.Width" height="@Model.Height"</text>}>
+            <img src="@imageUrl" alt="Screenshot" class="max-w-full h-auto" @if(Model.Width > 0){<text>width="@Model.Width" height="@Model.Height"</text>}>
         </div>
         <div class="mt-4 flex gap-3">
-            <button onclick="copyImageToClipboard('/screenshots/@filename')" 
+            <button onclick="copyImageToClipboard('@imageUrl')" 
                     class="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-600 hover:to-fuchsia-600 text-white font-medium rounded-xl transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
                 Copy Image
             </button>
-            <a href="/screenshots/@filename" download="@filename"
+            <a href="@imageUrl" download="@filename"
                class="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 bg-dark-800 hover:bg-dark-700 text-dark-200 font-medium rounded-xl border border-dark-700 transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -117,7 +121,7 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div class="bg-dark-900 rounded-2xl border border-dark-800 p-6">
             <div class="flex items-center justify-between mb-4">
-                <div class="flex items-center gap-3">
+                <div id="ocr-header" class="flex items-center gap-3">
                     <h2 class="text-lg font-semibold text-dark-100">Extracted Text</h2>
                     @if (isPending)
                     {
@@ -148,7 +152,6 @@
                 </div>
             </div>
             <div id="ocr-text" class="text-dark-400 text-sm whitespace-pre-wrap font-mono bg-dark-950 rounded-xl p-4 max-h-96 overflow-y-auto overflow-x-auto scrollbar-thin">@(isPending ? "Waiting for OCR to complete..." : (string.IsNullOrEmpty(Model.OcrText) ? "No text detected" : Model.OcrText))</div>
-            <div id="ocr-length" class="hidden">@(Model.OcrText?.Length ?? 0)</div>
         </div>
 
         <!-- Right Column: Details + Notes stacked -->
@@ -160,11 +163,11 @@
                         <dt class="text-dark-500">Filename</dt>
                         <dd class="text-dark-300">@filename</dd>
                     </div>
-                    @if (ViewBag.ImageWidth > 0)
+                    @if (Model.Width > 0)
                     {
                         <div class="flex justify-between">
                             <dt class="text-dark-500">Resolution</dt>
-                            <dd class="text-dark-300">@ViewBag.ImageWidth × @ViewBag.ImageHeight</dd>
+                            <dd class="text-dark-300">@Model.Width × @Model.Height</dd>
                         </div>
                     }
                     <div class="flex justify-between">
@@ -173,7 +176,7 @@
                     </div>
                     <div class="flex justify-between">
                         <dt class="text-dark-500">Text Length</dt>
-                        <dd class="text-dark-300">@(Model.OcrText?.Length ?? 0) characters</dd>
+                        <dd class="text-dark-300"><span id="ocr-length">@(Model.OcrText?.Length ?? 0)</span> characters</dd>
                     </div>
                 </dl>
             </div>
@@ -280,14 +283,14 @@
     async function reOcr(id) {
         const btn = document.getElementById('reocr-btn');
         const ocrTextEl = document.getElementById('ocr-text');
-        const headerEl = ocrTextEl.closest('.bg-dark-900').querySelector('.flex.items-center.gap-3');
+        const headerEl = document.getElementById('ocr-header');
 
         // Hide the button immediately
         btn.classList.add('hidden');
 
         try {
             const response = await apiFetch(`/api/screenshots/${id}/reocr`, { method: 'POST' });
-            if (response.ok || response.status === 202) {
+            if (response.ok) {
                 // Show processing status badge
                 let statusEl = document.getElementById('ocr-status');
                 if (!statusEl) {
@@ -479,11 +482,15 @@
     // ===== Keyboard Navigation =====
     // Capture Escape in capture phase so it runs first
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            e.preventDefault();
-            e.stopPropagation();
-            window.location.href = '/@(ViewBag.ReturnQuery != null ? "?q=" + ViewBag.ReturnQuery : "")';
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        e.stopPropagation();
+        // In a text field Escape just leaves the field; navigating away would discard unsaved notes
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+            e.target.blur();
+            return;
         }
+        window.location.href = '@backUrl';
     }, true);
 
     document.addEventListener('keydown', (e) => {

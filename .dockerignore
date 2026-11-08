@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+.git/
+.github/
+data/
+images/
+architecture/
+grafana/
+tests/
+*.md
+.env

@@ -7,7 +7,6 @@ services:
       - ./data:/data
       - ${SCREENSHOTS_PATH:-~/Pictures/Screenshots}:/screenshots
     environment:
-      - ASPNETCORE_URLS=http://+:5123
       - Ollama__BaseUrl=http://ollama:11434
       - Ollama__Model=${OLLAMA_MODEL:-minicpm-v}
       - Metrics__Enabled=${METRICS_ENABLED:-false}
@@ -42,7 +41,7 @@ services:
     image: grafana/loki:latest
     profiles: [monitoring]
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     volumes:
       - loki_data:/loki
     command: -config.expand-env=true -config.file=/etc/loki/local-config.yaml
@@ -63,7 +62,7 @@ services:
     image: prom/prometheus:latest
     profiles: [monitoring]
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -77,7 +76,7 @@ services:
     image: grafana/grafana:latest
     profiles: [monitoring]
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro

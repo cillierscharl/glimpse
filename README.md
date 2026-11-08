@@ -39,8 +39,20 @@ The first run downloads the minicpm-v vision model (~5GB) and starts indexing yo
 
 1. Watches your screenshot directory for new images
 2. Extracts text using minicpm-v vision model (via Ollama)
-3. Stores text and metadata in SQLite with full-text search
+3. Stores text and metadata in SQLite
 4. Web UI lets you search by content or date (e.g., "Nov 26", "error message")
+
+Screenshots that fail OCR (e.g. Ollama crashed) are marked as failed and retried on the next start, or immediately via **Re-OCR** on the detail page.
+
+## Running without Docker
+
+With [Ollama](https://ollama.com) running locally and the .NET 10 SDK installed:
+
+```bash
+Screenshots__WatchPath="$HOME/Pictures/Screenshots" dotnet run --project src/Glimpse
+```
+
+Open http://localhost:5123. The database defaults to `~/.local/share/glimpse/glimpse.db` (`%LOCALAPPDATA%\glimpse` on Windows); override with `Database__Path`.
 
 ## Monitoring (Optional)
 

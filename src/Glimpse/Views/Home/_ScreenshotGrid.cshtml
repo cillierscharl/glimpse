@@ -1,22 +1,18 @@
-@model List<Glimpse.Models.Screenshot>
-@using Glimpse.Models
-@using Glimpse.Helpers
+@model List<Screenshot>
 @{
     var query = ViewBag.SearchQuery as string;
 }
 
 @foreach (var screenshot in Model)
 {
-    var filename = System.IO.Path.GetFileName(screenshot.Path);
     var isPending = screenshot.Status == ScreenshotStatus.Pending || screenshot.Status == ScreenshotStatus.Processing;
-    var isFailed = screenshot.Status == ScreenshotStatus.Failed;
 
-    <a href="/detail/@screenshot.Id@(query != null ? "?q=" + query : "")"
+    <a href="@LinkHelper.Detail(screenshot.Id, query)"
        id="screenshot-card-@screenshot.Id"
        data-status="@((int)screenshot.Status)"
        class="group bg-dark-900 rounded-2xl border border-dark-800 overflow-hidden hover:border-dark-700 hover:shadow-xl hover:shadow-dark-950/50 transition-all duration-300 block @(isPending ? "opacity-80" : "")">
         <div class="aspect-video relative overflow-hidden">
-            <img src="/screenshots/@filename"
+            <img src="@LinkHelper.Image(screenshot.Path)"
                  alt="Screenshot"
                  loading="lazy"
                  class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">

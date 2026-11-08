@@ -7,9 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0-preview.*" />
-    <PackageReference Include="Polly.Core" Version="8.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
     <PackageReference Include="prometheus-net.AspNetCore" Version="8.2.1" />
+    <!-- Pinned: 3.2.0+ (which fixes the 3.1.x advisories) fails Release builds without a Six Labors license key.
+         Only used to read image dimensions, so the advisories (mostly TIFF/encoder paths) aren't reachable in practice. -->
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.3.1" />
   </ItemGroup>

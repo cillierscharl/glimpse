@@ -89,7 +89,7 @@
             if ('Notification' in window && Notification.permission === 'granted') {
                 const n = new Notification('Screenshot indexed', {
                     body: s.Filename,
-                    icon: '/screenshots/' + s.Filename,
+                    icon: '/screenshots/' + encodeURIComponent(s.Filename),
                     tag: 'screenshot-' + s.Id
                 });
                 n.onclick = () => {

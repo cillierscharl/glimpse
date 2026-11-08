@@ -1,31 +1,26 @@
 using Glimpse.Data;
+using Glimpse.Helpers;
 using Glimpse.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Prometheus;
 
 var builder = WebApplication.CreateBuilder(args);
 var metricsEnabled = builder.Configuration.GetValue<bool>("Metrics:Enabled");
+var watchPath = builder.Configuration.GetWatchPath();
+var dbPath = Path.GetFullPath(builder.Configuration.GetDatabasePath());
+
+Directory.CreateDirectory(watchPath);
+Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
 
 // Add MVC
 builder.Services.AddControllersWithViews();
 
-// Anti-forgery for CSRF protection
+// Anti-forgery for CSRF protection. No CORS policy is registered on purpose: the UI is same-origin, and
+// without one the browser already refuses cross-origin reads.
 builder.Services.AddAntiforgery(options =>
 {
     options.HeaderName = "X-XSRF-TOKEN";
-});
-
-// CORS - restrict to same origin only
-builder.Services.AddCors(options =>
-{
-    options.AddDefaultPolicy(policy =>
-    {
-        policy.SetIsOriginAllowed(origin =>
-            new Uri(origin).Host == "localhost" || new Uri(origin).Host == "127.0.0.1")
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
-    });
 });
 
 // Add Swagger
@@ -36,9 +31,6 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // Database
-var dbPath = builder.Configuration.GetValue<string>("Database:Path") 
-    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "glimpse", "glimpse.db");
-Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
 builder.Services.AddDbContext<GlimpseDbContext>(options =>
     options.UseSqlite($"Data Source={dbPath}"));
 
@@ -65,24 +57,18 @@ app.UseSwagger();
 app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Glimpse API v1"));
 
 // Serve screenshot files
-var watchPath = builder.Configuration.GetValue<string>("Screenshots:WatchPath")
-    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Pictures/Screenshots");
-if (Directory.Exists(watchPath))
+app.UseStaticFiles(new StaticFileOptions
 {
-    app.UseStaticFiles(new StaticFileOptions
+    FileProvider = new PhysicalFileProvider(watchPath),
+    RequestPath = "/screenshots",
+    OnPrepareResponse = ctx =>
     {
-        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(watchPath),
-        RequestPath = "/screenshots",
-        OnPrepareResponse = ctx =>
-        {
-            // Screenshots are immutable - cache for 1 year
-            ctx.Context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
-        }
-    });
-}
+        // Screenshots are immutable - cache for 1 year
+        ctx.Context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+    }
+});
 
 app.UseRouting();
-app.UseCors();
 app.UseAntiforgery();
 
 // Prometheus metrics (optional - enabled via Metrics:Enabled config)
@@ -100,8 +86,8 @@ app.MapGet("/api/progress/stream", (ScanProgressService progress, CancellationTo
     TypedResults.ServerSentEvents(progress.GetUpdatesAsync(ct)));
 
 // GPU stats endpoint
-app.MapGet("/api/gpu", async (GpuStatsService gpu) =>
-    await gpu.GetStatsAsync() is { } stats ? Results.Ok(stats) : Results.NoContent());
+app.MapGet("/api/gpu", async (GpuStatsService gpu, CancellationToken ct) =>
+    await gpu.GetStatsAsync(ct) is { } stats ? Results.Ok(stats) : Results.NoContent());
 
 app.MapControllerRoute(
     name: "detail",

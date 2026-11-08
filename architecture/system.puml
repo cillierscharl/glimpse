@@ -12,9 +12,9 @@ package "Docker Compose" as docker {
     component "Glimpse\n.NET 10 / ASP.NET Core" as glimpse {
         component "Web UI\nRazor + Tailwind" as ui
         component "REST API\nSwagger" as api
-        component "Screenshot Watcher\nFileSystemWatcher" as watcher
+        component "Screenshot Watcher\nPhysicalFileProvider (polling)" as watcher
         component "OCR Service" as ocr
-        database "SQLite\nFull-text search" as db
+        database "SQLite" as db
     }
 
     component "Ollama\nminicpm-v vision model" as ollama
@@ -31,7 +31,7 @@ actor "User" as user
 
 user --> ui : Browse & Search
 ui --> api : AJAX + SSE
-watcher <-- screenshots : FileSystemWatcher
+watcher <-- screenshots : watch
 watcher --> ocr : Queue
 ocr --> ollama : Base64 image
 ollama --> ocr : Extracted text
